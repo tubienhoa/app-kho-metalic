@@ -31,7 +31,9 @@ Trong thư mục `APP_KHO`: **Mới → Google Trang tính** → làm 2 lần:
 | Tên file (đặt đúng tên này) | Chứa gì |
 |---|---|
 | `APP_KHO_DANH_MUC` | Dữ liệu gốc: mã MISA, hàng kho, hệ số quy đổi… (ít thay đổi) |
-| `APP_KHO_PHAT_SINH_2026` | Phiếu nhập xuất, tài khoản, nhật ký… (phát sinh hằng ngày) |
+| `APP_KHO_PHAT_SINH_2026` | (cách cũ) Phiếu nhập xuất, tài khoản, nhật ký… của cả hai nhà máy |
+
+**Cách mới, khuyến nghị: dữ liệu riêng từng nhà máy.** Thay file `APP_KHO_PHAT_SINH_2026` bằng 2 file: `APP_KHO_PHAT_SINH_NM1_2026` và `APP_KHO_PHAT_SINH_NM2_2026` (mỗi nhà máy một file, tạo trống rồi chia sẻ cho tài khoản dịch vụ). Trong `secrets.toml` khai `sheet_id_danh_muc`, `sheet_id_nm1`, `sheet_id_nm2` (không dùng `sheet_id_phat_sinh`). Nếu đã có dữ liệu ở file cũ, chạy `python scripts/chuyen_tach_nha_may.py` (chạy thử trước, thêm `--thuc-hien` để ghi thật).
 
 **Lấy ID của từng file:** mở file, nhìn thanh địa chỉ trình duyệt:
 `https://docs.google.com/spreadsheets/d/` **`1AbC...xyz`** `/edit`

@@ -225,7 +225,7 @@ def _dang_nhap():
         else:
             st.session_state.so_lan_sai = 0
             st.session_state.user = r.iloc[0].to_dict()
-            L.ghi_nhat_ky(store(), r.iloc[0]["ma"], "DANG_NHAP", "")
+            L.ghi_nhat_ky(store(), r.iloc[0]["ma"], "DANG_NHAP", "", r.iloc[0]["nha_may"])
             di("chu")
 
 
@@ -345,7 +345,7 @@ def _nhan_hang(ten: str, dvt: str, ton: float) -> str:
 
 def _chon_hang(data, nha_may, so, xuat: bool, key: str):
     """Một ô duy nhất: bấm vào rồi gõ để tìm ngay trong danh sách. Trả về dòng hàng hoặc None."""
-    hang = L.hang_hoat_dong(data)
+    hang = L.hang_cua_nha_may(data, nha_may)    # chỉ hàng nhà máy này đã có phát sinh / được quản trị mở
     hang = hang[hang["so"] == so]
     ton = L.tinh_ton(data, nha_may).set_index("ma_hang")["ton_kho"]
     hang = hang.assign(ton=hang["ma_hang"].map(ton).fillna(0.0))
@@ -355,10 +355,11 @@ def _chon_hang(data, nha_may, so, xuat: bool, key: str):
     nhan = {m: _nhan_hang(t, d, x) for m, t, d, x in zip(hang["ma_hang"], hang["ten_hang"], hang["dvt_kho"], hang["ton"])}
     if not nhan:
         st.selectbox("Hàng", [], index=None, disabled=True, key=f"pf_sel_{key}_trong",
-                     placeholder="Không có hàng" + (" còn tồn" if xuat else "") + " trong sổ này")
+                     placeholder="Không có hàng" + (" còn tồn" if xuat else "") + f" trong sổ {so} của {nha_may}")
         return None
     ma = st.selectbox("Hàng (bấm vào rồi gõ tên để tìm, không cần dấu)", list(nhan), format_func=nhan.get,
-                      index=None, placeholder="Bấm vào đây rồi gõ tên hàng…", key=f"pf_sel_{key}")
+                      index=None, placeholder="Bấm vào đây rồi gõ tên hàng…", key=f"pf_sel_{key}",
+                      help=f"Chỉ hiện hàng của {nha_may}. Không thấy hàng cần dùng: báo quản trị mở hàng đó cho {nha_may}.")
     return None if ma is None else hang[hang["ma_hang"] == ma].iloc[0]
 
 
@@ -662,7 +663,8 @@ def trang_ton():
     tieu_de_trang("Tồn kho hiện tại")
     data = du_lieu()
     c = st.columns([1.2, 1.6, 4])
-    nm = c[0].selectbox("Nhà máy", NHA_MAY, index=NHA_MAY.index(u["nha_may"]))
+    nm = c[0].selectbox("Nhà máy", NHA_MAY, index=NHA_MAY.index(u["nha_may"]), disabled=not la_qt(),
+                        help="Nhân viên chỉ xem nhà máy của mình; quản trị xem được cả hai.")
     chi_con = c[1].selectbox("Hiển thị", ["Hàng còn tồn", "Tất cả hàng"]) == "Hàng còn tồn"
     tim = c[2].text_input("🔍 Tìm hàng (không cần dấu)")
     hang = L.hang_hoat_dong(data)
@@ -745,12 +747,12 @@ def _bo_loc(kp: str):
     u = user()
     hn = L.hom_nay()
     ver = st.session_state.get(f"ver_{kp}", 0)
-    nm_mac_dinh = st.session_state.get(f"mdnm_{kp}", u["nha_may"])
+    nm_mac_dinh = st.session_state.get(f"mdnm_{kp}", u["nha_may"]) if la_qt() else u["nha_may"]   # nhân viên: chỉ nhà máy mình
     tu_mac_dinh = st.session_state.get(f"mdtu_{kp}", hn - timedelta(days=NGAY_MAC_DINH))
     # Trong biểu mẫu (form): nhấn Enter ở bất kỳ ô nào, hoặc bấm LỌC, là lọc lại ngay theo các giá trị vừa nhập.
     with st.form(f"loc_{kp}_{ver}", border=False):
         c = st.columns([1.0, 1.25, 1.25, 1.2, 2.3, 0.95], vertical_alignment="bottom")
-        nm = c[0].selectbox("Nhà máy", NHA_MAY, index=NHA_MAY.index(nm_mac_dinh))
+        nm = c[0].selectbox("Nhà máy", NHA_MAY, index=NHA_MAY.index(nm_mac_dinh), disabled=not la_qt())
         tu_txt = c[1].text_input("Từ ngày (ngày/tháng/năm)", value=f"{tu_mac_dinh:%d/%m/%Y}", placeholder="vd 12/11/2026")
         den_txt = c[2].text_input("Đến ngày (ngày/tháng/năm)", value=f"{hn:%d/%m/%Y}", placeholder="vd 27/11/2026")
         nguoi = c[3].selectbox("Người lập", ["Của tôi", "Tất cả"], index=0 if not la_qt() else 1)
@@ -1011,7 +1013,7 @@ def trang_nguoi_dung():
                                                    pin_hash=hash_pin(pin) if pin else cu.iloc[0]["pin_hash"],
                                                    hoat_dong="1" if hd == "Đang dùng" else "0",
                                                    cap_nhat_luc=L.bay_gio().strftime("%Y-%m-%d %H:%M:%S"))])
-                L.ghi_nhat_ky(store(), user()["ma"], "NGUOI_DUNG", f"{ma} {quyen} {hd}")
+                L.ghi_nhat_ky(store(), user()["ma"], "NGUOI_DUNG", f"{ma} {quyen} {hd}", user()["nha_may"])
                 du_lieu_moi()
                 st.success("Đã lưu.")
                 st.rerun()
@@ -1136,7 +1138,7 @@ def trang_dm_quan_tri():
     if not _chi_qt():
         return
     data = du_lieu()
-    t1, t2, t3 = st.tabs(["➕ Thêm hàng mới", "✏️ Đổi hệ số hàng đã có", "⚖️ Khối lượng riêng"])
+    t1, t2, t3, t4 = st.tabs(["➕ Thêm hàng mới", "✏️ Đổi hệ số hàng đã có", "⚖️ Khối lượng riêng", "🏭 Mở hàng cho nhà máy"])
 
     with t1:
         c = st.columns([0.8, 3.2, 1.6])
@@ -1155,11 +1157,14 @@ def trang_dm_quan_tri():
         nhom = c[3].text_input("Tên nhóm mới", key="th_nhom_moi") if nv == "➕ Nhóm mới" else (nv or "")
         if ma_misa and dvt_kho.strip():
             kw = _o_quy_doi(data, "th", dvt_kho, dvt_misa)
-            ghi_chu = st.text_input("Ghi chú / nguồn hệ số (bắt buộc nếu nhập hệ số trực tiếp)", key="th_gc")
+            cc = st.columns([3, 2])
+            ghi_chu = cc[0].text_input("Ghi chú / nguồn hệ số (bắt buộc nếu nhập hệ số trực tiếp)", key="th_gc")
+            mo_cho = cc[1].multiselect("Cho nhà máy nào dùng hàng này", NHA_MAY, default=[user()["nha_may"]], key="th_mo",
+                                       help="Hàng chỉ hiện ở nhà máy được chọn. Mở thêm cho nhà máy khác sau ở tab “Mở hàng cho nhà máy”.")
             if st.button("💾 LƯU HÀNG & HỆ SỐ", type="primary", key="th_luu"):
                 try:
                     ma = L.them_hang(store(), du_lieu_moi(), user(), so=so, ma_misa=ma_misa, ten_hang=ten, nhom=nhom,
-                                     dvt_kho=dvt_kho, ghi_chu=ghi_chu, **kw)
+                                     dvt_kho=dvt_kho, ghi_chu=ghi_chu, mo_cho=mo_cho, **kw)
                 except L.LoiNghiepVu as e:
                     st.error(f"⚠ {e}")
                 else:
@@ -1200,6 +1205,28 @@ def trang_dm_quan_tri():
                             else:
                                 du_lieu_moi()
                                 st.success(f"Đã lưu: 1 {h['dvt_kho']} = {t['he_so']:g} {hs['dvt_misa']} từ {d:%d/%m/%Y}.")
+
+    with t4:
+        st.markdown('<div class="nho">Mỗi nhà máy chỉ thấy hàng đã có phát sinh / tồn đầu ở nhà máy đó. '
+                    'Hàng chưa từng có ở nhà máy nào: chọn hàng và nhà máy rồi bấm MỞ HÀNG.</div>', unsafe_allow_html=True)
+        h4 = _chon_hang_chung(data, "mh")
+        if h4 is not None:
+            da = [nm for nm in NHA_MAY if h4["ma_hang"] in set(L.hang_cua_nha_may(data, nm)["ma_hang"])]
+            chua = [nm for nm in NHA_MAY if nm not in da]
+            st.markdown(f"**{h4['ten_hang']}** · đang thấy ở: **{', '.join(da) or 'chưa nhà máy nào'}**")
+            if not chua:
+                st.success("Hàng này đã được mở cho cả hai nhà máy.")
+            else:
+                c4 = st.columns([2, 2, 4], vertical_alignment="bottom")
+                nm4 = c4[0].selectbox("Mở cho nhà máy", chua, key="mh_nm")
+                if c4[1].button("🏭 MỞ HÀNG", type="primary", key="mh_luu"):
+                    try:
+                        L.mo_hang_cho_nha_may(store(), du_lieu_moi(), user(), h4["ma_hang"], nm4)
+                    except L.LoiNghiepVu as e:
+                        st.error(f"⚠ {e}")
+                    else:
+                        du_lieu_moi()
+                        st.success(f"Đã mở hàng cho {nm4}.")
 
     with t3:
         klr = L.klr_hien_hanh(data)

@@ -25,6 +25,8 @@ SHEETS = {
     # loai: NCC | GIA_CONG | MUA_PHE_LIEU | KHAC
     "DOI_TAC": ["ma_doi_tac", "ten_doi_tac", "loai", "ghi_chu"],
     "BO_PHAN": ["nha_may", "ten_bo_phan"],
+    # Hàng được quản trị "mở" cho 1 nhà máy (ngoài các hàng nhà máy đó đã có phát sinh). Chỉ ghi thêm.
+    "HANG_NHA_MAY": ["nha_may", "ma_hang", "nguoi", "thoi_diem"],
     # Mỗi dòng = 1 dòng hàng của phiếu, kèm thông tin đầu phiếu (ghi 1 lần cả phiếu)
     "GIAO_DICH": ["phieu_id", "so_phieu", "loai", "ten_loai", "ngay", "nha_may",
                   "nguoi_lap", "thoi_diem_lap", "doi_tac", "bo_phan", "lsx", "po_kh",
@@ -40,11 +42,14 @@ SHEETS = {
     "TON_MISA_THAM_KHAO": ["ngay", "so", "kho_misa", "ma_misa", "sl_misa", "dvt_misa", "gia_tri"],
 }
 
-# ---- Chia 2 file Google Sheets ----
-# DANH_MUC: dữ liệu gốc (ít thay đổi, chỉ quản trị ghi qua app, kế toán được xem).
-# PHAT_SINH: phát sinh + hệ thống (chỉ app ghi, không ai sửa tay; mỗi năm một file).
+# ---- Chia file Google Sheets ----
+# DANH_MUC: dữ liệu gốc dùng CHUNG hai nhà máy (ít thay đổi, chỉ quản trị ghi qua app, kế toán được xem; gồm cả DOI_TAC).
+# PHAT_SINH: dữ liệu RIÊNG từng nhà máy (người dùng, phiếu, hủy, khóa sổ, tồn chốt, nhật ký; mỗi năm một bộ file).
+#   Chế độ tách (khuyến nghị): 3 file = DANH_MUC + PHAT_SINH_NM1 + PHAT_SINH_NM2; mỗi dòng ghi vào file của nhà máy đó,
+#   khi đọc app gộp hai file lại (nhân viên chỉ thấy nhà máy của mình, quản trị thấy cả hai).
+#   Chế độ cũ vẫn dùng được: 2 file (DANH_MUC + 1 file PHAT_SINH chung) hoặc 1 file cho tất cả.
 SHEETS_DANH_MUC = ["KHO_MISA", "MA_MISA", "HANG_KHO", "QUY_DOI", "KHOI_LUONG_RIENG", "DONG_NGHIA_DVT", "DOI_TAC",
-                   "BO_PHAN", "TON_MISA_THAM_KHAO"]
+                   "BO_PHAN", "HANG_NHA_MAY", "TON_MISA_THAM_KHAO"]
 SHEETS_PHAT_SINH = ["NGUOI_DUNG", "GIAO_DICH", "HUY_PHIEU", "KY_KHOA", "TON_CHOT", "NHAT_KY"]
 assert set(SHEETS_DANH_MUC) | set(SHEETS_PHAT_SINH) == set(SHEETS) and not set(SHEETS_DANH_MUC) & set(SHEETS_PHAT_SINH)
 

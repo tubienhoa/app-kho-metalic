@@ -3,7 +3,9 @@
 # Secrets cần khai trong kho này (Settings → Secrets and variables → Actions):
 #   GOOGLE_CREDENTIALS = toàn bộ nội dung file JSON tài khoản dịch vụ
 #   SHEET_ID_DANH_MUC  = ID file Google Sheets DANH MỤC
-#   SHEET_ID_PHAT_SINH = ID file Google Sheets PHÁT SINH (đổi mỗi năm khi mở file mới)
+#   SHEET_ID_NM1       = ID file PHÁT SINH của NM1 (đổi mỗi năm khi mở file mới)
+#   SHEET_ID_NM2       = ID file PHÁT SINH của NM2
+#   (dữ liệu chưa tách nhà máy thì dùng SHEET_ID_PHAT_SINH thay cho hai dòng trên)
 name: Sao luu du lieu kho
 on:
   schedule:
@@ -24,6 +26,8 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           SHEET_ID_DANH_MUC: ${{ secrets.SHEET_ID_DANH_MUC }}
           SHEET_ID_PHAT_SINH: ${{ secrets.SHEET_ID_PHAT_SINH }}
+          SHEET_ID_NM1: ${{ secrets.SHEET_ID_NM1 }}
+          SHEET_ID_NM2: ${{ secrets.SHEET_ID_NM2 }}
         run: python scripts/cong_cu.py sao_luu du_lieu
       - run: |
           git config user.name "sao-luu-tu-dong"

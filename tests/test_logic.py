@@ -239,6 +239,33 @@ def main():
     ok(L.doc_ngay("12/11", 2026) == _d(2026, 11, 12), "thiếu năm -> năm mặc định")
     ok(L.doc_ngay("31/02/2026") is None and L.doc_ngay("abc") is None and L.doc_ngay("") is None
        and L.doc_ngay("12/13/2026") is None and L.doc_ngay("12/11/26") is None, "ngày sai / rỗng / năm 2 chữ số -> None")
+
+    # ---- Dữ liệu tách theo nhà máy: hàng của từng nhà máy, mở hàng, người dùng mới nhất ----
+    h2 = set(L.hang_cua_nha_may(D(), "NM2")["ma_hang"])
+    h1 = set(L.hang_cua_nha_may(D(), "NM1")["ma_hang"])
+    ok("TT3-1220x2500" in h2 and "OXY" in h2, "hàng có tồn đầu / phát sinh ở NM2 thì NM2 thấy")
+    ok(ma in h2, "hàng quản trị NM2 vừa thêm tự mở cho NM2")
+    ok(ma not in h1, "hàng thêm cho NM2 chưa hiện ở NM1")
+    gd_ = D()["GIAO_DICH"]
+    ok(h1 <= set(gd_[gd_["nha_may"] == "NM1"]["ma_hang"]) | set(D()["HANG_NHA_MAY"].query("nha_may == 'NM1'")["ma_hang"]),
+       "NM1 chỉ thấy hàng đã có phát sinh hoặc được mở")
+    loi(lambda: L.mo_hang_cho_nha_may(s, D(), K2, ma, "NM1"), "quản trị")
+    L.mo_hang_cho_nha_may(s, D(), QT, ma, "NM1")
+    ok(ma in set(L.hang_cua_nha_may(D(), "NM1")["ma_hang"]), "quản trị mở hàng cho NM1 -> NM1 thấy")
+    loi(lambda: L.mo_hang_cho_nha_may(s, D(), QT, ma, "NM1"), "đã được mở")
+    loi(lambda: L.mo_hang_cho_nha_may(s, D(), QT, ma, "NM3"), "Nhà máy không đúng")
+    loi(lambda: L.mo_hang_cho_nha_may(s, D(), QT, "KHONG_CO", "NM2"), "Không tìm thấy hàng")
+    ma2 = L.them_hang(s, D(), QT, so="MTL", ma_misa=D()["MA_MISA"].iloc[0]["ma_misa"], ten_hang="Hàng thử mở hai nhà máy",
+                      nhom="Thử", dvt_kho=D()["MA_MISA"].iloc[0]["dvt_misa"], cach="CUNG_DVT", mo_cho=["NM1", "NM2"])
+    ok(ma2 in set(L.hang_cua_nha_may(D(), "NM1")["ma_hang"]) and ma2 in set(L.hang_cua_nha_may(D(), "NM2")["ma_hang"]),
+       "them_hang(mo_cho=[NM1, NM2]) -> cả hai nhà máy thấy")
+    # người dùng: dòng mới nhất theo cap_nhat_luc, không theo thứ tự dòng (2 file nhà máy được gộp)
+    s.append("NGUOI_DUNG", [dict(ma="DOI", ten="Đổi", nha_may="NM1", quyen="KHO", pin_hash="x", hoat_dong="1", cap_nhat_luc="2026-11-27 10:00:00")])
+    s.append("NGUOI_DUNG", [dict(ma="DOI", ten="Đổi", nha_may="NM2", quyen="KHO", pin_hash="x", hoat_dong="1", cap_nhat_luc="2026-11-27 09:00:00")])
+    nd = L.nguoi_dung(D()).set_index("ma")
+    ok(nd.loc["DOI", "nha_may"] == "NM1", "người dùng: dòng có cap_nhat_luc mới nhất thắng dù nằm trước trong sheet")
+    nh_ky = D()["NHAT_KY"]
+    ok((nh_ky["hanh_dong"] == "MO_HANG").sum() == 1, "mở hàng được ghi vào nhật ký")
     print(f"\nTẤT CẢ {N} KIỂM TRA ĐẠT")
 
 

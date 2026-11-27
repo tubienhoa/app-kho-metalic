@@ -22,7 +22,7 @@ from kho.schema import NUMERIC, SHEETS  # noqa: E402
 from kho.store import LocalStore, mo_store  # noqa: E402
 
 DANH_MUC = ["KHO_MISA", "MA_MISA", "HANG_KHO", "QUY_DOI", "KHOI_LUONG_RIENG", "DONG_NGHIA_DVT", "DOI_TAC", "BO_PHAN",
-            "TON_MISA_THAM_KHAO"]
+            "HANG_NHA_MAY", "TON_MISA_THAM_KHAO"]
 
 
 def mo(args):
@@ -32,7 +32,8 @@ def mo(args):
         import json
         return mo_store(dict(kieu="sheets", credentials=json.loads(os.environ["GOOGLE_CREDENTIALS"]),
                              sheet_id_danh_muc=os.environ.get("SHEET_ID_DANH_MUC") or os.environ.get("SHEET_ID"),
-                             sheet_id_phat_sinh=os.environ.get("SHEET_ID_PHAT_SINH") or os.environ.get("SHEET_ID")))
+                             sheet_id_phat_sinh=os.environ.get("SHEET_ID_PHAT_SINH") or os.environ.get("SHEET_ID"),
+                             sheet_id_nm1=os.environ.get("SHEET_ID_NM1"), sheet_id_nm2=os.environ.get("SHEET_ID_NM2")))
     with open(os.path.join(ROOT, ".streamlit", "secrets.toml"), "rb") as f:
         cfg = tomllib.load(f)["luu_tru"]
     return mo_store(dict(cfg))

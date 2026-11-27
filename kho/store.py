@@ -9,7 +9,7 @@ import threading
 
 import pandas as pd
 
-from .schema import NUMERIC, SHEETS, SHEETS_DANH_MUC
+from .schema import NHA_MAY, NUMERIC, SHEETS, SHEETS_DANH_MUC
 
 
 def _to_frame(name: str, rows: list[list]) -> pd.DataFrame:
@@ -109,7 +109,11 @@ class LocalStore:
 class SheetsStore:
     """Google Sheets qua tài khoản dịch vụ (service account).
 
-    spreadsheet_ids: một chuỗi (1 file chứa tất cả sheet) hoặc dict {"danh_muc": id, "phat_sinh": id} (2 file).
+    spreadsheet_ids:
+      - một chuỗi: 1 file chứa tất cả sheet;
+      - {"danh_muc": id, "phat_sinh": id}: 2 file (phát sinh chung hai nhà máy – cách cũ);
+      - {"danh_muc": id, "NM1": id, "NM2": id}: 3 file, dữ liệu phát sinh TÁCH THEO NHÀ MÁY
+        (ghi vào file của nhà máy đó, đọc thì gộp lại).
     """
 
     def __init__(self, credentials_info: dict, spreadsheet_ids):
@@ -117,18 +121,39 @@ class SheetsStore:
         if isinstance(spreadsheet_ids, str):
             spreadsheet_ids = {"danh_muc": spreadsheet_ids, "phat_sinh": spreadsheet_ids}
         self._gc = gspread.service_account_from_dict(credentials_info)
+        self.tach_nha_may = all(nm in spreadsheet_ids for nm in NHA_MAY)
+        keys = ["danh_muc"] + (list(NHA_MAY) if self.tach_nha_may else ["phat_sinh"])
         self._files = {}
-        for k in ("danh_muc", "phat_sinh"):
+        for k in keys:
             i = spreadsheet_ids[k]
             self._files[k] = next((f for kk, f in self._files.items() if spreadsheet_ids[kk] == i), None) \
                 or self._gc.open_by_key(i)
-        gop = spreadsheet_ids["danh_muc"] == spreadsheet_ids["phat_sinh"]
-        self._of = {n: ("danh_muc" if gop or n in SHEETS_DANH_MUC else "phat_sinh") for n in SHEETS}
+        gop = not self.tach_nha_may and spreadsheet_ids["danh_muc"] == spreadsheet_ids["phat_sinh"]
+        # nơi chứa từng sheet: khóa file, hoặc None = có mặt ở MỌI file nhà máy (chế độ tách)
+        self._of = {n: ("danh_muc" if gop or n in SHEETS_DANH_MUC else ("phat_sinh" if not self.tach_nha_may else None))
+                    for n in SHEETS}
+
+    # ---- định tuyến ----
+    def _khoa_cua_dong(self, name: str, row: dict) -> str:
+        """File sẽ nhận 1 dòng của sheet `name`."""
+        k = self._of[name]
+        if k is not None:
+            return k
+        nm = str(row.get("nha_may", "") or "").strip()
+        if not nm:   # HUY_PHIEU: suy ra từ số phiếu (NM2-N1-…)
+            sp = str(row.get("so_phieu", "") or "")
+            nm = sp[:3] if sp[:3] in NHA_MAY else ""
+        if not nm and row.get("nguoi") == "HE_THONG":   # dòng thử kết nối
+            nm = NHA_MAY[0]
+        if nm not in NHA_MAY:
+            raise ValueError(f"Không biết ghi dòng của sheet {name} vào file nhà máy nào (thiếu nha_may): {row}")
+        return nm
 
     def _ten_theo_file(self):
         out = {}
         for n, k in self._of.items():
-            out.setdefault(k, []).append(n)
+            for kk in ([k] if k is not None else list(NHA_MAY)):
+                out.setdefault(kk, []).append(n)
         return out
 
     def khoi_tao(self):
@@ -155,33 +180,44 @@ class SheetsStore:
                         raise ValueError(f"Sheet {name} đã có nhưng tiêu đề khác mẫu: {first}")
 
     def read_all(self) -> dict[str, pd.DataFrame]:
-        data = {}
+        mot_file = {}   # sheet nằm ở 1 file -> bảng
+        nhieu = {}      # sheet có ở mọi file nhà máy -> list bảng (theo thứ tự NM1, NM2)
         for key, names in self._ten_theo_file().items():
             res = self._files[key].values_batch_get(
                 [f"'{n}'" for n in names],
                 params={"valueRenderOption": "UNFORMATTED_VALUE", "dateTimeRenderOption": "FORMATTED_STRING"})
             for name, vr in zip(names, res.get("valueRanges", [])):
-                data[name] = _to_frame(name, vr.get("values", []))
-        return {n: data[n] for n in SHEETS}
+                df = _to_frame(name, vr.get("values", []))
+                if self._of[name] is None:
+                    nhieu.setdefault(name, []).append(df)
+                else:
+                    mot_file[name] = df
+        for name, dfs in nhieu.items():
+            mot_file[name] = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
+        return {n: mot_file[n] for n in SHEETS}
 
     def append(self, name: str, rows: list[dict]):
         if not rows:
             return
-        values = [_row_values(name, r) for r in rows]
-        # RAW: chuỗi giữ nguyên (không thành công thức/ngày); 1 lần gọi = ghi trọn cả phiếu
-        self._files[self._of[name]].worksheet(name).append_rows(
-            values, value_input_option="RAW", insert_data_option="INSERT_ROWS", table_range="A1")
+        theo_file = {}
+        for r in rows:
+            theo_file.setdefault(self._khoa_cua_dong(name, r), []).append(_row_values(name, r))
+        # 1 lần gọi cho mỗi file = ghi trọn cả phiếu (1 phiếu luôn thuộc đúng 1 nhà máy)
+        for key, values in theo_file.items():
+            self._files[key].worksheet(name).append_rows(
+                values, value_input_option="RAW", insert_data_option="INSERT_ROWS", table_range="A1")
 
     def mo_ta(self) -> list[dict]:
         """Nơi đang lưu dữ liệu (hiển thị trong app cho người quản trị yên tâm)."""
         out, thay = [], set()
-        for key, nhan in (("danh_muc", "Danh mục (dữ liệu gốc)"), ("phat_sinh", "Phát sinh & hệ thống")):
-            sh = self._files[key]
+        nhan_cua = {"danh_muc": "Danh mục chung (dữ liệu gốc, đối tác)", "phat_sinh": "Phát sinh & hệ thống",
+                    **{nm: f"Phát sinh riêng {nm}" for nm in NHA_MAY}}
+        gop = len(set(map(id, self._files.values()))) == 1
+        for key, sh in self._files.items():
             if id(sh) in thay:
                 continue
             thay.add(id(sh))
-            gop = self._files["danh_muc"] is self._files["phat_sinh"]
-            out.append(dict(nhan="Google Sheets (cả danh mục lẫn phát sinh)" if gop else f"Google Sheets – {nhan}",
+            out.append(dict(nhan="Google Sheets (cả danh mục lẫn phát sinh)" if gop else f"Google Sheets – {nhan_cua[key]}",
                             ten=sh.title, url=sh.url))
         return out
 
@@ -198,20 +234,39 @@ class SheetsStore:
             if thieu:
                 raise RuntimeError("\n".join(dong))
         dau = f"KIEM_TRA_{uuid.uuid4().hex[:8]}"
-        self.append("NHAT_KY", [dict(thoi_diem="", nguoi="HE_THONG", hanh_dong="KIEM_TRA_KET_NOI", chi_tiet=dau)])
-        doc = self.read_all()["NHAT_KY"]
-        if dau not in set(doc["chi_tiet"]):
-            raise RuntimeError("Đã ghi dòng thử vào NHAT_KY nhưng đọc lại không thấy. Kiểm tra quyền chia sẻ file.")
-        dong.append(f"Ghi và đọc lại dòng thử trong NHAT_KY: ĐẠT (mã {dau}). Bạn có thể xóa dòng này trong Sheets.")
+        cac_nm = list(NHA_MAY) if self.tach_nha_may else [None]
+        for nm in cac_nm:   # ghi 1 dòng thử vào NHAT_KY của TỪNG file nhà máy
+            self.append("NHAT_KY", [dict(thoi_diem="", nguoi="HE_THONG", hanh_dong="KIEM_TRA_KET_NOI",
+                                         chi_tiet=f"{dau}{'_' + nm if nm else ''}", nha_may=nm or "")])
+        doc = set(self.read_all()["NHAT_KY"]["chi_tiet"])
+        thieu_doc = [nm for nm in cac_nm if f"{dau}{'_' + nm if nm else ''}" not in doc]
+        if thieu_doc:
+            raise RuntimeError("Đã ghi dòng thử vào NHAT_KY nhưng đọc lại không thấy"
+                               f"{' (' + ', '.join(thieu_doc) + ')' if thieu_doc[0] else ''}. Kiểm tra quyền chia sẻ file.")
+        dong.append(f"Ghi và đọc lại dòng thử trong NHAT_KY{' của cả ' + ' và '.join(NHA_MAY) if self.tach_nha_may else ''}: "
+                    f"ĐẠT (mã {dau}). Bạn có thể xóa các dòng này trong Sheets.")
         return dong
 
 
 def mo_store(cfg: dict):
-    """cfg: {'kieu': 'local', 'duong_dan': ...} hoặc
-    {'kieu': 'sheets', 'sheet_id_danh_muc': ..., 'sheet_id_phat_sinh': ..., 'credentials': {...}}
-    (chỉ có 'sheet_id' thì dùng 1 file cho tất cả)."""
+    """Mở kho dữ liệu theo cấu hình.
+
+    - Excel chạy thử: {'kieu': 'local', 'duong_dan': ...}
+    - Google, 3 file tách nhà máy: {'kieu': 'sheets', 'sheet_id_danh_muc', 'sheet_id_nm1', 'sheet_id_nm2', 'credentials'}
+    - Google, 2 file: {'kieu': 'sheets', 'sheet_id_danh_muc', 'sheet_id_phat_sinh', 'credentials'}
+    - Google, 1 file cho tất cả: chỉ có 'sheet_id'.
+    """
     if cfg.get("kieu") == "sheets":
         dm = cfg.get("sheet_id_danh_muc") or cfg.get("sheet_id")
+        nm1, nm2 = cfg.get("sheet_id_nm1"), cfg.get("sheet_id_nm2")
+        if bool(nm1) != bool(nm2):
+            raise ValueError("Thiếu sheet_id_nm1 hoặc sheet_id_nm2 trong secrets (phải có đủ cả hai để tách theo nhà máy).")
+        if nm1 and nm2:
+            if not dm:
+                raise ValueError("Thiếu sheet_id_danh_muc trong secrets.")
+            if len({dm, nm1, nm2}) < 3:
+                raise ValueError("sheet_id_danh_muc, sheet_id_nm1, sheet_id_nm2 phải là 3 file khác nhau.")
+            return SheetsStore(dict(cfg["credentials"]), {"danh_muc": dm, "NM1": nm1, "NM2": nm2})
         ps = cfg.get("sheet_id_phat_sinh") or cfg.get("sheet_id")
         if not dm or not ps:
             raise ValueError("Thiếu sheet_id_danh_muc / sheet_id_phat_sinh (hoặc sheet_id) trong secrets.")

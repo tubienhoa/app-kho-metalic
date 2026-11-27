@@ -100,11 +100,11 @@ Chạy kiểm tra tự động: `python tests/test_logic.py`
 
 **Hướng dẫn chi tiết từng bước, kèm cách kiểm tra dữ liệu đã về CSDL: xem [HUONG_DAN_GOOGLE_SHEETS.md](HUONG_DAN_GOOGLE_SHEETS.md).** Tóm tắt:
 
-### 5.1 Hai file Google Sheets
-Tạo 2 bảng tính trống trong Drive: **`APP_KHO_DANH_MUC`** (dữ liệu gốc) và **`APP_KHO_PHAT_SINH_2026`** (phát sinh và hệ thống). Chép ID của từng file (phần giữa `/d/` và `/edit` trong đường link). Cách chia sheet và lý do: mục 8.
+### 5.1 Ba file Google Sheets
+Tạo 3 bảng tính trống trong Drive: **`APP_KHO_DANH_MUC`** (dữ liệu gốc dùng chung, gồm cả đối tác), **`APP_KHO_PHAT_SINH_NM1_2026`** và **`APP_KHO_PHAT_SINH_NM2_2026`** (phiếu và hệ thống, mỗi nhà máy một file). Chép ID của từng file (phần giữa `/d/` và `/edit` trong đường link) vào `sheet_id_danh_muc`, `sheet_id_nm1`, `sheet_id_nm2`. Cách chia sheet và lý do: mục 8. (Cách cũ 2 file với `sheet_id_phat_sinh` vẫn chạy được.)
 
 ### 5.2 Tài khoản dịch vụ (service account) để app đọc/ghi file
-Tạo ở console.cloud.google.com, bật Google Sheets API và Google Drive API, tải khóa JSON, rồi **chia sẻ cả 2 file** cho `client_email` trong file JSON với quyền Người chỉnh sửa. Giữ kín file JSON, không đưa lên GitHub.
+Tạo ở console.cloud.google.com, bật Google Sheets API và Google Drive API, tải khóa JSON, rồi **chia sẻ cả 3 file** cho `client_email` trong file JSON với quyền Người chỉnh sửa. Giữ kín file JSON, không đưa lên GitHub.
 
 ### 5.3 Khai thông tin bí mật (secrets)
 Chép `.streamlit/secrets.toml.example` thành `.streamlit/secrets.toml`, điền `sheet_id_danh_muc`, `sheet_id_phat_sinh` và các trường từ file JSON. File này đã được chặn trong `.gitignore`.
@@ -173,12 +173,17 @@ Công cụ đọc `Danh muc du lieu_V5.xlsx` và `So ton kho_23112026_v3.xlsx` (
 - Mã quy cách trong app có dạng `Q00001`; cột `nguon` của `HANG_KHO` ghi dòng nguồn trong V5 để truy vết.
 - Danh sách tổ/bộ phận của NM2 (`BO_PHAN`) lấy từ cột “BP/Tổ xuất” của sheet VTTH-NM2, cần kiểm tra lại; NM1 chưa có danh sách (gõ tên trực tiếp vào ô Tổ / bộ phận).
 
-## 8. Bố trí cơ sở dữ liệu trên Google Sheets (2 file)
+## 8. Bố trí cơ sở dữ liệu trên Google Sheets (3 file: danh mục chung + mỗi nhà máy một file)
 
 | File | Sheet | Ai ghi, ai xem |
 |---|---|---|
-| **APP_KHO_DANH_MUC** (dữ liệu gốc, ít đổi) | `MA_MISA`, `KHO_MISA`, `HANG_KHO`, `QUY_DOI`, `KHOI_LUONG_RIENG`, `DONG_NGHIA_DVT`, `DOI_TAC`, `BO_PHAN`, `TON_MISA_THAM_KHAO` | Chỉ quản trị ghi (qua app). Kế toán chỉ xem |
-| **APP_KHO_PHAT_SINH_2026** (phát sinh + hệ thống) | `GIAO_DICH`, `HUY_PHIEU`, `KY_KHOA`, `TON_CHOT`, `NHAT_KY`, `NGUOI_DUNG` | Chỉ app ghi. Không ai sửa tay. Chỉ chủ file và tài khoản dịch vụ truy cập |
+| **APP_KHO_DANH_MUC** (dữ liệu gốc dùng chung, ít đổi) | `MA_MISA`, `KHO_MISA`, `HANG_KHO`, `QUY_DOI`, `KHOI_LUONG_RIENG`, `DONG_NGHIA_DVT`, `DOI_TAC`, `BO_PHAN`, `HANG_NHA_MAY`, `TON_MISA_THAM_KHAO` | Chỉ quản trị ghi (qua app); riêng `DOI_TAC` app tự thêm khi nhập đối tác mới. Kế toán chỉ xem |
+| **APP_KHO_PHAT_SINH_NM1_2026** | `GIAO_DICH`, `HUY_PHIEU`, `KY_KHOA`, `TON_CHOT`, `NHAT_KY`, `NGUOI_DUNG` của NM1 | Chỉ app ghi. Không ai sửa tay. Chỉ chủ file và tài khoản dịch vụ truy cập |
+| **APP_KHO_PHAT_SINH_NM2_2026** | các sheet như trên, của NM2 | như trên |
+
+- **Dữ liệu riêng từng nhà máy:** phiếu, hủy phiếu, khóa sổ, tồn chốt, nhật ký và người dùng của nhà máy nào nằm trong file của nhà máy đó. App đọc cả hai file rồi gộp để tính; nhân viên chỉ xem được nhà máy của mình, quản trị xem được cả hai (báo cáo "Cả NM1 + NM2"). Chuyển kho (X5 → N4) ghi ở file bên gửi và file bên nhận. Đối tác dùng chung.
+- **Hàng của từng nhà máy:** danh mục hàng vẫn là một bản chung, nhưng mỗi nhà máy chỉ thấy hàng đã có phát sinh hoặc tồn đầu ở nhà máy đó, hoặc hàng quản trị đã "mở" (sheet `HANG_NHA_MAY`; Quản trị → Danh mục hàng & quy đổi → tab Mở hàng cho nhà máy; hàng thêm mới tự mở cho nhà máy được chọn).
+- **Chuyển từ 1 file phát sinh chung sang 2 file nhà máy:** `python scripts/chuyen_tach_nha_may.py` (chạy thử trước, thêm `--thuc-hien` để ghi; đọc hướng dẫn đầu file script).
 
 - **Vì sao tách:** làm lại sau khi có số chuẩn chỉ cần tạo file phát sinh mới, danh mục giữ nguyên; kế toán xem được danh mục nhưng không thấy mã PIN (đã băm) và nhật ký; Google giới hạn 10 triệu ô mỗi file và app đọc cả sheet mỗi lần làm mới, nên mỗi năm một file phát sinh (đầu năm sau tồn đầu lấy từ `TON_CHOT` cuối năm).
 - `TON_MISA_THAM_KHAO` là số tồn MISA tại 23/11/2026, **chỉ để đối chiếu** trong báo cáo (3 cột cuối của sheet `*_THEO_MA_MISA`), không tham gia tính tồn.

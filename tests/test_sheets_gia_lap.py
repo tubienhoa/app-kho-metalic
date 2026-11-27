@@ -87,6 +87,7 @@ def cai_gspread(files):
 
 def main():
     from kho import logic as L
+    P, Dg = L.PhieuNhap, L.DongNhap
     from kho.schema import SHEETS, SHEETS_DANH_MUC, SHEETS_PHAT_SINH
     from kho.store import SheetsStore, mo_store
 
@@ -161,6 +162,123 @@ def main():
         ok(False, "phải báo thiếu cấu hình")
     except ValueError as e:
         ok("sheet_id_phat_sinh" in str(e), "thiếu 1 trong 2 mã file -> báo lỗi rõ ràng")
+
+    # ================= 3 file: DANH MỤC chung + PHÁT SINH riêng từng nhà máy =================
+    from kho.schema import NHA_MAY
+    DM3 = FakeSS("APP_KHO_DANH_MUC", "https://docs.google.com/spreadsheets/d/DM3")
+    F1 = FakeSS("APP_KHO_PHAT_SINH_NM1_2026", "https://docs.google.com/spreadsheets/d/N1")
+    F2 = FakeSS("APP_KHO_PHAT_SINH_NM2_2026", "https://docs.google.com/spreadsheets/d/N2")
+    cai_gspread({"DM3": DM3, "N1": F1, "N2": F2})
+    t = mo_store(dict(kieu="sheets", sheet_id_danh_muc="DM3", sheet_id_nm1="N1", sheet_id_nm2="N2", credentials={"x": 1}))
+    ok(t.tach_nha_may and len(t.mo_ta()) == 3, "mo_store: có sheet_id_nm1 + sheet_id_nm2 -> chế độ 3 file tách nhà máy")
+    for cfg, chua in [(dict(sheet_id_danh_muc="DM3", sheet_id_nm1="N1"), "sheet_id_nm2"),
+                      (dict(sheet_id_danh_muc="DM3", sheet_id_nm1="N1", sheet_id_nm2="N1"), "3 file khác nhau"),
+                      (dict(sheet_id_nm1="N1", sheet_id_nm2="N2"), "sheet_id_danh_muc")]:
+        try:
+            mo_store(dict(kieu="sheets", credentials={"x": 1}, **cfg))
+            ok(False, "phải báo lỗi cấu hình")
+        except ValueError as e:
+            ok(chua in str(e), f"cấu hình sai -> báo lỗi rõ ({chua})")
+    try:
+        t.kiem_tra()
+        ok(False, "phải báo thiếu sheet")
+    except RuntimeError as e:
+        ok("THIẾU" in str(e), "3 file chưa khởi tạo -> báo thiếu sheet")
+    t.khoi_tao()
+    td = lambda f: {w.title for w in f.worksheets()} - {"Sheet1"}
+    ok(td(DM3) == set(SHEETS_DANH_MUC) and td(F1) == set(SHEETS_PHAT_SINH) and td(F2) == set(SHEETS_PHAT_SINH),
+       "khởi tạo: danh mục chỉ có sheet chung (kể cả DOI_TAC, HANG_NHA_MAY); mỗi file nhà máy có đủ sheet phát sinh")
+    dong = t.kiem_tra()
+    ok(any("ĐẠT" in d for d in dong) and F1.worksheet("NHAT_KY").values[-1][2] == "KIEM_TRA_KET_NOI"
+       and F2.worksheet("NHAT_KY").values[-1][2] == "KIEM_TRA_KET_NOI", "kiểm tra kết nối: ghi và đọc lại dòng thử ở CẢ HAI file nhà máy")
+
+    t.append("KHO_MISA", [dict(nha_may="NM2", so="MTL", kho_misa="152.SX"), dict(nha_may="NM1", so="MTL", kho_misa="152.GC")])
+    t.append("MA_MISA", [dict(so="MTL", ma_misa="THEPTAM004", ten_misa="Thép tấm 3 ly", dvt_misa="kg")])
+    QT1 = dict(ma="QT", ten="QT", nha_may="NM2", quyen="QUAN_TRI")
+    K_1 = dict(ma="K1", ten="K1", nha_may="NM1", quyen="KHO")
+    K_2 = dict(ma="K2", ten="K2", nha_may="NM2", quyen="KHO")
+    mh = L.them_hang(t, t.read_all(), QT1, so="MTL", ma_misa="THEPTAM004", ten_hang="Thép tấm 3 x 1220 x 2500mm", nhom="Thép tấm",
+                     dvt_kho="tấm", cach="KICH_THUOC", hinh_dang="tấm", vat_lieu="thép", kt=[3, 1220, 2500], mo_cho=["NM1", "NM2"])
+    ok(len(DM3.worksheet("HANG_KHO").values) == 2 and len(DM3.worksheet("HANG_NHA_MAY").values) == 3,
+       "thêm hàng -> danh mục chung; mở cho 2 nhà máy -> 2 dòng HANG_NHA_MAY")
+    ok(len(F1.worksheet("NGUOI_DUNG").values) == 1 and len(F2.worksheet("GIAO_DICH").values) == 1,
+       "thêm hàng không ghi phiếu vào file nhà máy nào")
+    t.append("NGUOI_DUNG", [dict(ma="K1", ten="K1", nha_may="NM1", quyen="KHO", pin_hash="x", hoat_dong="1", cap_nhat_luc="2026-11-27 08:00:00"),
+                            dict(ma="K2", ten="K2", nha_may="NM2", quyen="KHO", pin_hash="x", hoat_dong="1", cap_nhat_luc="2026-11-27 08:00:00")])
+    ok(len(F1.worksheet("NGUOI_DUNG").values) == 2 and len(F2.worksheet("NGUOI_DUNG").values) == 2
+       and F1.worksheet("NGUOI_DUNG").values[1][0] == "K1" and F2.worksheet("NGUOI_DUNG").values[1][0] == "K2",
+       "người dùng NM1 vào file NM1, người dùng NM2 vào file NM2")
+    ok(set(t.read_all()["NGUOI_DUNG"]["ma"]) == {"K1", "K2"}, "đọc lại: đăng nhập thấy người dùng của cả hai file")
+
+    hn = str(L.hom_nay())
+    sp2 = L.lap_phieu(t, t.read_all(), K_2, P("N1", hn, "NM2", [Dg(mh, 10, kg_hoa_don=733.0)], doi_tac="NCC A"))
+    sp1 = L.lap_phieu(t, t.read_all(), K_1, P("N1", hn, "NM1", [Dg(mh, 4)], doi_tac="NCC B"))
+    ok(len(F2.worksheet("GIAO_DICH").values) == 2 and len(F1.worksheet("GIAO_DICH").values) == 2,
+       "phiếu NM2 chỉ vào file NM2, phiếu NM1 chỉ vào file NM1")
+    ok(F2.worksheet("GIAO_DICH").values[1][1] == sp2 and F1.worksheet("GIAO_DICH").values[1][1] == sp1, "mỗi file giữ đúng số phiếu của nhà máy mình")
+    ok(len(DM3.worksheet("DOI_TAC").values) == 3, "đối tác tự thêm vào danh mục CHUNG (cả hai nhà máy cùng thấy)")
+    d3 = t.read_all()
+    ok(len(d3["GIAO_DICH"]) == 2 and L.ton_mot(d3, "NM2", mh) == 10 and L.ton_mot(d3, "NM1", mh) == 4,
+       "đọc gộp hai file; tồn từng nhà máy tách riêng (NM2 = 10, NM1 = 4)")
+    ok(len(F1.worksheet("NHAT_KY").values) >= 3 and len(F2.worksheet("NHAT_KY").values) >= 3, "nhật ký ghi vào file của nhà máy người thao tác")
+    # chuyển kho NM2 -> NM1 đi qua hai file
+    x5 = L.lap_phieu(t, t.read_all(), K_2, P("X5", hn, "NM2", [Dg(mh, 3)], kho_den="NM1"))
+    cho = L.x5_cho_nhan(t.read_all(), "NM1")
+    ok(len(cho) == 1 and len(F2.worksheet("GIAO_DICH").values) == 3, "X5 ghi ở file NM2, NM1 thấy phiếu chờ nhận")
+    n4 = L.phieu_nhan_tu_x5(t.read_all(), cho.iloc[0]["phieu_id"], hn)
+    L.lap_phieu(t, t.read_all(), K_1, n4)
+    d3 = t.read_all()
+    ok(len(F1.worksheet("GIAO_DICH").values) == 3 and L.ton_mot(d3, "NM1", mh) == 7 and L.ton_mot(d3, "NM2", mh) == 7,
+       "N4 ghi ở file NM1; tồn sau chuyển kho: NM2 giảm 3 (=7), NM1 tăng 3 (=7)")
+    # hủy phiếu: dòng HUY_PHIEU vào file của nhà máy có phiếu
+    L.huy_phieu(t, t.read_all(), K_1, d3["GIAO_DICH"][d3["GIAO_DICH"]["so_phieu"] == sp1].iloc[0]["phieu_id"], "thử hủy")
+    ok(len(F1.worksheet("HUY_PHIEU").values) == 2 and len(F2.worksheet("HUY_PHIEU").values) == 1,
+       "hủy phiếu NM1 -> HUY_PHIEU của file NM1")
+    L.khoa_so(t, t.read_all(), QT1, "NM2", str(L.hom_nay() - __import__("datetime").timedelta(days=1)))
+    ok(len(F2.worksheet("KY_KHOA").values) == 2 and len(F1.worksheet("KY_KHOA").values) == 1, "khóa sổ NM2 -> KY_KHOA của file NM2")
+    try:
+        t.append("HUY_PHIEU", [dict(phieu_id="x", so_phieu="XX-N1-1", ly_do="", nguoi_huy="a", thoi_diem="")])
+        ok(False, "phải báo không biết ghi vào file nào")
+    except ValueError as e:
+        ok("thiếu nha_may" in str(e), "dòng không rõ thuộc nhà máy nào -> từ chối ghi, không đoán")
+
+    # ---- Script chuyển từ 1 file phát sinh chung sang 2 file nhà máy ----
+    from scripts.chuyen_tach_nha_may import chuyen
+    O_DM = FakeSS("APP_KHO_DANH_MUC", "https://docs.google.com/spreadsheets/d/ODM")
+    O_PS = FakeSS("APP_KHO_PHAT_SINH_2026", "https://docs.google.com/spreadsheets/d/OPS")
+    M1 = FakeSS("APP_KHO_PHAT_SINH_NM1_2026", "https://docs.google.com/spreadsheets/d/M1")
+    M2 = FakeSS("APP_KHO_PHAT_SINH_NM2_2026", "https://docs.google.com/spreadsheets/d/M2")
+    cai_gspread({"ODM": O_DM, "OPS": O_PS, "M1": M1, "M2": M2})
+    cu = mo_store(dict(kieu="sheets", sheet_id_danh_muc="ODM", sheet_id_phat_sinh="OPS", credentials={"x": 1}))
+    cu.khoi_tao()
+    cu.append("KHO_MISA", [dict(nha_may="NM2", so="MTL", kho_misa="152.SX"), dict(nha_may="NM1", so="MTL", kho_misa="152.GC")])
+    cu.append("MA_MISA", [dict(so="MTL", ma_misa="THEPTAM004", ten_misa="Thép tấm 3 ly", dvt_misa="kg")])
+    mc = L.them_hang(cu, cu.read_all(), QT1, so="MTL", ma_misa="THEPTAM004", ten_hang="Thép tấm 3 x 1220 x 2500mm", nhom="Thép tấm",
+                     dvt_kho="tấm", cach="KICH_THUOC", hinh_dang="tấm", vat_lieu="thép", kt=[3, 1220, 2500])
+    cu.append("NGUOI_DUNG", [dict(ma="K1", ten="K1", nha_may="NM1", quyen="KHO", pin_hash="x", hoat_dong="1", cap_nhat_luc="t"),
+                             dict(ma="K2", ten="K2", nha_may="NM2", quyen="KHO", pin_hash="x", hoat_dong="1", cap_nhat_luc="t")])
+    for nm in NHA_MAY:
+        pk = P("K1", "2026-11-23", nm, [Dg(mc, 100 if nm == "NM1" else 250, dau=1)], ly_do="Tồn đầu")
+        L.lap_phieu(cu, cu.read_all(), QT1, pk)
+    L.lap_phieu(cu, cu.read_all(), K_2, P("N1", hn, "NM2", [Dg(mc, 5)], doi_tac="NCC"))   # phiếu thử
+    moi = mo_store(dict(kieu="sheets", sheet_id_danh_muc="ODM", sheet_id_nm1="M1", sheet_id_nm2="M2", credentials={"x": 1}))
+    bao = chuyen(cu, moi, thuc_hien=False)
+    ok(any("CHẠY THỬ" in b for b in bao) and len(M1.worksheets()) == 1 and len(M2.worksheets()) == 1,
+       "chạy thử: chỉ báo cáo, không tạo sheet / không ghi gì vào file mới")
+    bao = chuyen(cu, moi, thuc_hien=True)
+    ok(any("đối chiếu ĐẠT" in b for b in bao), "chuyển thật: đối chiếu đạt")
+    dn = moi.read_all()
+    g = dn["GIAO_DICH"]
+    ok(set(g["loai"]) == {"K1"} and len(g) == 2, "mặc định chỉ chuyển tồn đầu K1 (phiếu thử N1 không chuyển)")
+    ok(L.ton_mot(dn, "NM1", mc) == 100 and L.ton_mot(dn, "NM2", mc) == 250, "tồn đầu từng nhà máy giữ nguyên sau khi chuyển")
+    ok(len(M1.worksheet("GIAO_DICH").values) == 2 and len(M2.worksheet("GIAO_DICH").values) == 2
+       and set(dn["NGUOI_DUNG"]["ma"]) == {"K1", "K2"}, "mỗi nhà máy một file; người dùng chuyển theo nhà máy")
+    ok(len(O_PS.worksheet("GIAO_DICH").values) == 4, "file cũ giữ nguyên (không sửa, không xóa)")
+    try:
+        chuyen(cu, moi, thuc_hien=True)
+        ok(False, "phải từ chối chạy lần 2")
+    except SystemExit as e:
+        ok("đã có dữ liệu" in str(e), "chạy lần 2 bị từ chối, không ghi trùng")
     print(f"\nTẤT CẢ {N} KIỂM TRA GIẢ LẬP GOOGLE ĐẠT")
 
 

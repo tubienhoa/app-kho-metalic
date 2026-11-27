@@ -41,14 +41,19 @@ def main():
         with open(SECRETS, "rb") as f:
             cu = tomllib.load(f).get("luu_tru", {})
     id_dm, id_ps = cu.get("sheet_id_danh_muc", ""), cu.get("sheet_id_phat_sinh", "")
-    if not id_dm or not id_ps:
-        raise SystemExit("secrets.toml chưa có sheet_id_danh_muc / sheet_id_phat_sinh. Điền 2 ID trước rồi chạy lại.")
+    id_n1, id_n2 = cu.get("sheet_id_nm1", ""), cu.get("sheet_id_nm2", "")
+    if not id_dm or not ((id_n1 and id_n2) or id_ps):
+        raise SystemExit("secrets.toml chưa có sheet_id_danh_muc và (sheet_id_nm1 + sheet_id_nm2, hoặc sheet_id_phat_sinh). "
+                         "Điền ID các file trước rồi chạy lại.")
     noi_dung = (
         "# Tệp bí mật của app. KHÔNG đưa lên GitHub, không gửi cho ai.\n"
         "[luu_tru]\n"
         'kieu = "sheets"\n'
         f"sheet_id_danh_muc  = {q(id_dm)}   # APP_KHO_DANH_MUC\n"
-        f"sheet_id_phat_sinh = {q(id_ps)}   # APP_KHO_PHAT_SINH_2026\n\n"
+        + (f"sheet_id_phat_sinh = {q(id_ps)}   # APP_KHO_PHAT_SINH_2026 (file cũ / chung)\n" if id_ps else "")
+        + (f"sheet_id_nm1 = {q(id_n1)}   # APP_KHO_PHAT_SINH_NM1_2026\n" if id_n1 else "")
+        + (f"sheet_id_nm2 = {q(id_n2)}   # APP_KHO_PHAT_SINH_NM2_2026\n" if id_n2 else "")
+        + "\n"
         "[luu_tru.credentials]\n"
         + "".join(f"{x} = {q(k[x])}\n" for x in CAN)
         + f"token_uri = {q(k.get('token_uri', 'https://oauth2.googleapis.com/token'))}\n")

@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 import pandas as pd
 
 from . import quydoi
-from .schema import DUNG_SAI, LOAI, NHAN_O, QUYEN_QUAN_TRI
+from .schema import DUNG_SAI, LOAI, NHA_MAY, NHAN_O, QUYEN_QUAN_TRI
 
 VN_TZ = timezone(timedelta(hours=7))
 EPS = 1e-9
@@ -77,8 +77,36 @@ def hang_hoat_dong(data) -> pd.DataFrame:
     return h[h["hoat_dong"].map(_co)].reset_index(drop=True)
 
 
+def hang_cua_nha_may(data, nha_may: str) -> pd.DataFrame:
+    """Hàng đang dùng mà nhà máy này được thấy: đã có phát sinh/tồn đầu ở nhà máy này, hoặc được quản trị 'mở' (HANG_NHA_MAY).
+    Danh mục vẫn là một bản chung; đây chỉ là bộ lọc để nhân viên không thấy hàng của nhà máy khác."""
+    h = hang_hoat_dong(data)
+    gd = data["GIAO_DICH"]
+    co = set(gd[gd["nha_may"] == nha_may]["ma_hang"])
+    mo = data["HANG_NHA_MAY"]
+    co |= set(mo[mo["nha_may"] == nha_may]["ma_hang"])
+    return h[h["ma_hang"].isin(co)].reset_index(drop=True)
+
+
+def mo_hang_cho_nha_may(store, data, user: dict, ma_hang: str, nha_may: str):
+    """Quản trị cho phép nhà máy `nha_may` nhập/xuất hàng này (chưa từng có phát sinh ở đó)."""
+    _can_qt(user)
+    if nha_may not in NHA_MAY:
+        raise LoiNghiepVu("Nhà máy không đúng.")
+    h = hang_hoat_dong(data)
+    if ma_hang not in set(h["ma_hang"]):
+        raise LoiNghiepVu("Không tìm thấy hàng (hoặc hàng đã ngừng dùng).")
+    if ma_hang in set(hang_cua_nha_may(data, nha_may)["ma_hang"]):
+        raise LoiNghiepVu(f"Hàng này đã được mở cho {nha_may}.")
+    store.append("HANG_NHA_MAY", [dict(nha_may=nha_may, ma_hang=ma_hang, nguoi=user["ma"],
+                                       thoi_diem=bay_gio().strftime("%Y-%m-%d %H:%M:%S"))])
+    ghi_nhat_ky(store, user["ma"], "MO_HANG", f"{ma_hang} cho {nha_may}", user["nha_may"])
+
+
 def nguoi_dung(data) -> pd.DataFrame:
-    return data["NGUOI_DUNG"].drop_duplicates("ma", keep="last").reset_index(drop=True)
+    """Mỗi mã 1 dòng: dòng cập nhật MỚI NHẤT (theo cap_nhat_luc; dữ liệu 2 nhà máy được gộp nên không dựa vào thứ tự dòng)."""
+    nd = data["NGUOI_DUNG"].sort_values("cap_nhat_luc", kind="stable")
+    return nd.drop_duplicates("ma", keep="last").reset_index(drop=True)
 
 
 def he_so(data, ma_hang: str, ngay: str):
@@ -312,12 +340,12 @@ def lap_phieu(store, data, user: dict, p: PhieuNhap) -> str:
                      phieu_lien_quan=p.phieu_lien_quan, ly_do=p.ly_do.strip(),
                      ghi_chu_phieu=p.ghi_chu_phieu.strip())
     store.append("GIAO_DICH", [{**dau_phieu, **d} for d in dong])
-    ghi_nhat_ky(store, user["ma"], "LAP_PHIEU", f"{so_phieu} ({len(dong)} dòng)")
+    ghi_nhat_ky(store, user["ma"], "LAP_PHIEU", f"{so_phieu} ({len(dong)} dòng)", p.nha_may)
     try:   # phiếu đã ghi xong; lỗi ghi nhớ đối tác không được làm hỏng phiếu
         _ghi_nho_doi_tac(store, data, user, p, so_phieu)
     except Exception as e:
         try:   # không làm hỏng phiếu, nhưng để lại dấu vết trong nhật ký
-            ghi_nhat_ky(store, user["ma"], "LOI_GHI_NHO_DOI_TAC", f"{so_phieu}: {type(e).__name__}: {e}"[:300])
+            ghi_nhat_ky(store, user["ma"], "LOI_GHI_NHO_DOI_TAC", f"{so_phieu}: {type(e).__name__}: {e}"[:300], p.nha_may)
         except Exception:
             pass
     return so_phieu
@@ -384,8 +412,9 @@ def huy_phieu(store, data, user: dict, phieu_id: str, ly_do: str):
             ten = dong[dong["ma_hang"] == ma]["ten_hang"].iloc[0]
             raise LoiNghiepVu(f"Hủy phiếu này làm tồn {ten} bị âm (hàng đã được xuất). Không hủy được.")
     store.append("HUY_PHIEU", [dict(phieu_id=phieu_id, so_phieu=r["so_phieu"], ly_do=ly_do.strip(),
-                                    nguoi_huy=user["ma"], thoi_diem=bay_gio().strftime("%Y-%m-%d %H:%M:%S"))])
-    ghi_nhat_ky(store, user["ma"], "HUY_PHIEU", f"{r['so_phieu']}: {ly_do.strip()}")
+                                    nguoi_huy=user["ma"], thoi_diem=bay_gio().strftime("%Y-%m-%d %H:%M:%S"),
+                                    nha_may=r["nha_may"])])   # nha_may chỉ để định tuyến file, không phải cột
+    ghi_nhat_ky(store, user["ma"], "HUY_PHIEU", f"{r['so_phieu']}: {ly_do.strip()}", r["nha_may"])
 
 
 # ---------------- Kiểm kê ----------------
@@ -460,7 +489,7 @@ def khoa_so(store, data, user: dict, nha_may: str, den_ngay: str):
                          thoi_diem=now))
     store.append("TON_CHOT", rows)
     store.append("KY_KHOA", [dict(nha_may=nha_may, khoa_den_ngay=den_ngay, nguoi_khoa=user["ma"], thoi_diem=now)])
-    ghi_nhat_ky(store, user["ma"], "KHOA_SO", f"{nha_may} đến {den_ngay}")
+    ghi_nhat_ky(store, user["ma"], "KHOA_SO", f"{nha_may} đến {den_ngay}", nha_may)
 
 
 # ---------------- Kiểm tra danh mục ----------------
@@ -500,9 +529,10 @@ def kiem_tra_danh_muc(data) -> pd.DataFrame:
     return pd.DataFrame(loi, columns=["Sheet", "Mã", "Lỗi"])
 
 
-def ghi_nhat_ky(store, nguoi: str, hanh_dong: str, chi_tiet: str):
+def ghi_nhat_ky(store, nguoi: str, hanh_dong: str, chi_tiet: str, nha_may: str = ""):
+    """Ghi nhật ký. `nha_may`: nhà máy của người thao tác (khi dữ liệu tách theo nhà máy, dòng này vào file của nhà máy đó)."""
     store.append("NHAT_KY", [dict(thoi_diem=bay_gio().strftime("%Y-%m-%d %H:%M:%S"),
-                                  nguoi=nguoi, hanh_dong=hanh_dong, chi_tiet=chi_tiet)])
+                                  nguoi=nguoi, hanh_dong=hanh_dong, chi_tiet=chi_tiet, nha_may=nha_may)])
 
 
 # ---------------- Kg theo hóa đơn: cảnh báo lệch quá dung sai ----------------
@@ -551,7 +581,7 @@ def dat_klr(store, data, user: dict, vat_lieu: str, klr: float, ghi_chu: str = "
         raise LoiNghiepVu("Khối lượng riêng phải nằm trong khoảng 0,5 – 25 g/cm³.")
     store.append("KHOI_LUONG_RIENG", [dict(vat_lieu=vat_lieu, klr=float(klr), ghi_chu=ghi_chu.strip(), nguoi=user["ma"],
                                            thoi_diem=bay_gio().strftime("%Y-%m-%d %H:%M:%S"))])
-    ghi_nhat_ky(store, user["ma"], "KLR", f"{vat_lieu} = {klr:g} g/cm3")
+    ghi_nhat_ky(store, user["ma"], "KLR", f"{vat_lieu} = {klr:g} g/cm3", user["nha_may"])
 
 
 def ma_misa_cua_so(data, so: str) -> pd.DataFrame:
@@ -605,8 +635,9 @@ def _id_hang_moi(data) -> str:
 
 
 def them_hang(store, data, user: dict, *, so: str, ma_misa: str, ten_hang: str, nhom: str, dvt_kho: str,
-              cach: str, ghi_chu: str = "", **kw) -> str:
-    """Thêm hàng kho (1 quy cách) + dòng hệ số đầu tiên. Trả về mã quy cách mới (Qnnnnn)."""
+              cach: str, ghi_chu: str = "", mo_cho: list | None = None, **kw) -> str:
+    """Thêm hàng kho (1 quy cách) + dòng hệ số đầu tiên. Trả về mã quy cách mới (Qnnnnn).
+    mo_cho: các nhà máy được thấy hàng này ngay (mặc định: nhà máy của quản trị đang thêm)."""
     _can_qt(user)
     ten_hang, dvt_kho, ma_misa = ten_hang.strip(), dvt_kho.strip().lower(), ma_misa.strip()
     if not ten_hang or not dvt_kho or not nhom.strip():
@@ -631,7 +662,9 @@ def them_hang(store, data, user: dict, *, so: str, ma_misa: str, ten_hang: str, 
                                    vat_lieu=t["vat_lieu"], quy_cach="x".join(f"{x:g}" for x in t["kt"]), hoat_dong="1",
                                    ghi_chu=ghi_chu.strip(), nguon=f"app {user['ma']} {now:%Y-%m-%d}")])
     _ghi_dong_quy_doi(store, user, ma, dvt_kho, dvt_misa, t, "", ghi_chu, now)
-    ghi_nhat_ky(store, user["ma"], "THEM_HANG", f"{ma} {ten_hang} ({dvt_kho}→{dvt_misa} x{t['he_so']:g})")
+    for nm in (mo_cho if mo_cho is not None else [user["nha_may"]]):
+        store.append("HANG_NHA_MAY", [dict(nha_may=nm, ma_hang=ma, nguoi=user["ma"], thoi_diem=f"{now:%Y-%m-%d %H:%M:%S}")])
+    ghi_nhat_ky(store, user["ma"], "THEM_HANG", f"{ma} {ten_hang} ({dvt_kho}→{dvt_misa} x{t['he_so']:g})", user["nha_may"])
     return ma
 
 
@@ -665,5 +698,5 @@ def doi_he_so(store, data, user: dict, ma_hang: str, *, cach: str, hieu_luc_tu: 
     if cach == "TRUC_TIEP" and not ghi_chu.strip():
         raise LoiNghiepVu("Hệ số nhập trực tiếp phải ghi nguồn (số cân / chứng từ nào) vào ô ghi chú.")
     _ghi_dong_quy_doi(store, user, ma_hang, h["dvt_kho"], dvt_misa, t, hieu_luc_tu, ghi_chu, bay_gio())
-    ghi_nhat_ky(store, user["ma"], "DOI_HE_SO", f"{ma_hang} → {t['he_so']:g} từ {hieu_luc_tu}")
+    ghi_nhat_ky(store, user["ma"], "DOI_HE_SO", f"{ma_hang} → {t['he_so']:g} từ {hieu_luc_tu}", user["nha_may"])
     return t
