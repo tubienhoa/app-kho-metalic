@@ -259,6 +259,9 @@ def main():
                       nhom="Thử", dvt_kho=D()["MA_MISA"].iloc[0]["dvt_misa"], cach="CUNG_DVT", mo_cho=["NM1", "NM2"])
     ok(ma2 in set(L.hang_cua_nha_may(D(), "NM1")["ma_hang"]) and ma2 in set(L.hang_cua_nha_may(D(), "NM2")["ma_hang"]),
        "them_hang(mo_cho=[NM1, NM2]) -> cả hai nhà máy thấy")
+    du_lieu_cu = {k: v for k, v in D().items() if k != "HANG_NHA_MAY"}   # dữ liệu đọc theo bản cũ, chưa có sheet mới
+    ok(set(L.hang_cua_nha_may(du_lieu_cu, "NM2")["ma_hang"]) >= {"TT3-1220x2500", "OXY"},
+       "thiếu sheet HANG_NHA_MAY (dữ liệu bản cũ) -> không sập, vẫn lọc theo phát sinh")
     # người dùng: dòng mới nhất theo cap_nhat_luc, không theo thứ tự dòng (2 file nhà máy được gộp)
     s.append("NGUOI_DUNG", [dict(ma="DOI", ten="Đổi", nha_may="NM1", quyen="KHO", pin_hash="x", hoat_dong="1", cap_nhat_luc="2026-11-27 10:00:00")])
     s.append("NGUOI_DUNG", [dict(ma="DOI", ten="Đổi", nha_may="NM2", quyen="KHO", pin_hash="x", hoat_dong="1", cap_nhat_luc="2026-11-27 09:00:00")])

@@ -83,8 +83,9 @@ def hang_cua_nha_may(data, nha_may: str) -> pd.DataFrame:
     h = hang_hoat_dong(data)
     gd = data["GIAO_DICH"]
     co = set(gd[gd["nha_may"] == nha_may]["ma_hang"])
-    mo = data["HANG_NHA_MAY"]
-    co |= set(mo[mo["nha_may"] == nha_may]["ma_hang"])
+    mo = data.get("HANG_NHA_MAY")   # chưa có sheet này (file/bộ nhớ đọc theo bản cũ) thì coi như chưa mở hàng nào
+    if mo is not None and not mo.empty:
+        co |= set(mo[mo["nha_may"] == nha_may]["ma_hang"])
     return h[h["ma_hang"].isin(co)].reset_index(drop=True)
 
 
