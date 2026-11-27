@@ -1,0 +1,10 @@
+# KHÔNG đưa lên GitHub
+.streamlit/secrets.toml
+*.json
+du_lieu_thu/
+__pycache__/
+*.pyc
+~$*.xlsx
+danh_muc/*.xlsx
+_bi_mat/
+_ghi_chu_claude/
