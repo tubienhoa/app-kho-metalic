@@ -36,7 +36,7 @@ def _row_values(name: str, row: dict) -> list:
     out = []
     for c in SHEETS[name]:
         v = row.get(c, "")
-        if v is None:
+        if v is None or (isinstance(v, float) and v != v):   # None hoặc NaN (ô số trống đọc từ bảng) -> ô trống
             v = ""
         if c in NUMERIC and v != "":
             v = float(v)
@@ -179,19 +179,30 @@ class SheetsStore:
                     else:
                         raise ValueError(f"Sheet {name} đã có nhưng tiêu đề khác mẫu: {first}")
 
-    def read_all(self) -> dict[str, pd.DataFrame]:
+    def read_all(self, cho_phep_thieu: bool = False) -> dict[str, pd.DataFrame]:
+        """Đọc mọi sheet. cho_phep_thieu=True: sheet chưa tồn tại coi như rỗng (chỉ dùng khi đọc file CŨ lúc chuyển dữ liệu)."""
         mot_file = {}   # sheet nằm ở 1 file -> bảng
         nhieu = {}      # sheet có ở mọi file nhà máy -> list bảng (theo thứ tự NM1, NM2)
+
+        def nhan(name, df):
+            if self._of[name] is None:
+                nhieu.setdefault(name, []).append(df)
+            else:
+                mot_file[name] = df
+
         for key, names in self._ten_theo_file().items():
+            if cho_phep_thieu:
+                have = {ws.title for ws in self._files[key].worksheets()}
+                for n in [n for n in names if n not in have]:
+                    nhan(n, _to_frame(n, []))
+                names = [n for n in names if n in have]
+            if not names:
+                continue
             res = self._files[key].values_batch_get(
                 [f"'{n}'" for n in names],
                 params={"valueRenderOption": "UNFORMATTED_VALUE", "dateTimeRenderOption": "FORMATTED_STRING"})
             for name, vr in zip(names, res.get("valueRanges", [])):
-                df = _to_frame(name, vr.get("values", []))
-                if self._of[name] is None:
-                    nhieu.setdefault(name, []).append(df)
-                else:
-                    mot_file[name] = df
+                nhan(name, _to_frame(name, vr.get("values", [])))
         for name, dfs in nhieu.items():
             mot_file[name] = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
         return {n: mot_file[n] for n in SHEETS}

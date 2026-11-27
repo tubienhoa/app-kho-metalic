@@ -279,6 +279,11 @@ def main():
         ok(False, "phải từ chối chạy lần 2")
     except SystemExit as e:
         ok("đã có dữ liệu" in str(e), "chạy lần 2 bị từ chối, không ghi trùng")
+    # ô số trống (NaN) đọc từ bảng khi chuyển dữ liệu: phải ghi thành ô trống, không làm hỏng JSON gửi Google
+    n0 = len(F1.worksheet("TON_CHOT").values)
+    t.append("TON_CHOT", [dict(nha_may="NM1", ngay_chot="2026-11-01", ma_hang="X", sl_kho=float("nan"), sl_misa=None)])
+    ok(len(F1.worksheet("TON_CHOT").values) == n0 + 1 and F1.worksheet("TON_CHOT").values[-1][7] == "",
+       "ô số NaN / None được ghi thành ô trống")
     print(f"\nTẤT CẢ {N} KIỂM TRA GIẢ LẬP GOOGLE ĐẠT")
 
 

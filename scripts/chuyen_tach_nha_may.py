@@ -33,7 +33,7 @@ def chuyen(cu, moi, giu_tat_ca: bool = False, thuc_hien: bool = False) -> list[s
     bao = []
     if not getattr(moi, "tach_nha_may", False):
         raise SystemExit("Store mới phải là cấu hình 3 file (có sheet_id_nm1, sheet_id_nm2).")
-    d_cu = cu.read_all()
+    d_cu = cu.read_all(cho_phep_thieu=True)   # file cũ có thể chưa có sheet mới (vd HANG_NHA_MAY)
     gd = d_cu["GIAO_DICH"]
     if thuc_hien:
         moi.khoi_tao()    # tạo sheet còn thiếu ở 3 file (file danh mục: chỉ thêm HANG_NHA_MAY nếu chưa có)
