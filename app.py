@@ -42,7 +42,6 @@ def logo_html(cao: int) -> str:
 
 NGAY_MAC_DINH = 15      # bộ lọc phiếu: mặc định lấy 15 ngày gần nhất (hôm nay 27 → từ 12)
 CAO_DS = 430            # chiều cao khung danh sách / chi tiết phiếu (px)
-CAO_DONG = 262          # chiều cao khung "các dòng trong phiếu" (px)
 
 st.markdown("""
 <style>
@@ -103,6 +102,9 @@ li[role="option"], li[role="option"] div { font-size: 16.5px !important; }
 .tieu-de { font-size: 22px; font-weight: 700; color: #111827; }
 .so-phieu { font-size: 26px; font-weight: 700; color: #1a7f37; padding: 6px 0; }
 .nho { font-size: 14px; color: #6b7280; }
+.qd-auto { background: #e8f5ec; color: #14532d; border-radius: 8px; min-height: 42px; display: flex; align-items: center;
+  padding: 0 10px; font-weight: 700; font-size: 16.5px; white-space: nowrap; overflow: hidden; }
+.qd-trong { background: #f3f4f6; color: #9ca3af; font-weight: 500; font-size: 14px; }
 .ct-luoi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px 18px; font-size: 15px; margin: 4px 0 8px; }
 </style>""", unsafe_allow_html=True)
 
@@ -156,7 +158,9 @@ def la_qt() -> bool:
 
 
 def _reset_phieu():
-    for k in ("dong", "phieu_id", "ket_qua", "ket_ngay", "dem_dong", "chon_phieu"):
+    for k in ("dong", "phieu_id", "ket_qua", "ket_ngay", "dem_dong", "chon_phieu", "ver_bang"):
+        st.session_state.pop(k, None)
+    for k in [k for k in st.session_state if str(k).startswith("pf_")]:   # các ô của màn lập phiếu
         st.session_state.pop(k, None)
 
 
@@ -320,45 +324,42 @@ def trang_chu():
 
 # ---------------- Lập phiếu (vừa 1 màn hình) ----------------
 
+def _so(x: float) -> str:
+    """Số kiểu Việt Nam, bỏ số 0 thừa: 245,297 · 383.294,42 · 6.070 (dấu phẩy thập phân, dấu chấm ngăn nghìn)."""
+    s = f"{float(x):,.3f}".rstrip("0").rstrip(".")
+    return s.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def _pt(p: float, so_le: int = 1) -> str:
+    """Phần trăm kiểu Việt Nam: +2,6%."""
+    return f"{p * 100:+.{so_le}f}".replace(".", ",") + "%"
+
+
+def _nhan_hang(ten: str, dvt: str, ton: float) -> str:
+    """Nhãn trong ô chọn hàng. Gắn thêm tên KHÔNG DẤU ở cuối để gõ không dấu vẫn tìm được
+    (ô chọn của Streamlit chỉ so khớp đúng ký tự)."""
+    nhan = f"{ten}  ·  {dvt}  ·  tồn {_so(ton)}"
+    kd = L.bo_dau(ten)
+    return nhan + (f"  ·  {kd}" if kd != str(ten).lower() else "")
+
+
 def _chon_hang(data, nha_may, so, xuat: bool, key: str):
+    """Một ô duy nhất: bấm vào rồi gõ để tìm ngay trong danh sách. Trả về dòng hàng hoặc None."""
     hang = L.hang_hoat_dong(data)
     hang = hang[hang["so"] == so]
     ton = L.tinh_ton(data, nha_may).set_index("ma_hang")["ton_kho"]
     hang = hang.assign(ton=hang["ma_hang"].map(ton).fillna(0.0))
     if xuat:
         hang = hang[hang["ton"] > 1e-9]
-    tk = st.text_input("🔍 Tìm hàng (gõ vài chữ, không cần dấu, vd: thep tam 3)", key=f"tk_{key}")
-    if len(tk.strip()) < 2:
-        st.markdown('<div class="nho">👆 Gõ vài chữ vào ô trên để tìm hàng, rồi mới chọn ở đây.</div>',
-                    unsafe_allow_html=True)
-        st.selectbox("Chọn hàng", [], index=None, placeholder="(gõ ô tìm hàng trước)", disabled=True,
-                     key=f"sel_{key}_trong")
+    hang = hang.sort_values("ten_hang")
+    nhan = {m: _nhan_hang(t, d, x) for m, t, d, x in zip(hang["ma_hang"], hang["ten_hang"], hang["dvt_kho"], hang["ton"])}
+    if not nhan:
+        st.selectbox("Hàng", [], index=None, disabled=True, key=f"pf_sel_{key}_trong",
+                     placeholder="Không có hàng" + (" còn tồn" if xuat else "") + " trong sổ này")
         return None
-    kq = L.tim_hang(hang, tk).sort_values("ten_hang")
-    if kq.empty:
-        st.warning("Không thấy hàng." + (" (Chỉ hiện hàng còn tồn.)" if xuat else ""))
-        return None
-    if len(kq) > 200:
-        st.caption(f"Có {len(kq)} hàng – gõ thêm chữ để thu hẹp. Đang hiện 200 hàng đầu.")
-        kq = kq.head(200)
-    nhan = {r["ma_hang"]: f"{r['ten_hang']}  |  {r['dvt_kho']}  |  tồn: {r['ton']:g}" for _, r in kq.iterrows()}
-    ma = st.selectbox("Chọn hàng", list(nhan), format_func=nhan.get, index=None,
-                      placeholder="Bấm để chọn", key=f"sel_{key}")
-    return None if ma is None else kq[kq["ma_hang"] == ma].iloc[0]
-
-
-class _Luoi:
-    """Xếp các ô nhập thành lưới nhiều cột, ô nào đến lượt thì lấy cột kế tiếp."""
-
-    def __init__(self, so_cot=4):
-        self.k, self.n, self.cols = so_cot, 0, None
-
-    def o(self):
-        if self.n % self.k == 0:
-            self.cols = st.columns(self.k)
-        c = self.cols[self.n % self.k]
-        self.n += 1
-        return c
+    ma = st.selectbox("Hàng (bấm vào rồi gõ tên để tìm, không cần dấu)", list(nhan), format_func=nhan.get,
+                      index=None, placeholder="Bấm vào đây rồi gõ tên hàng…", key=f"pf_sel_{key}")
+    return None if ma is None else hang[hang["ma_hang"] == ma].iloc[0]
 
 
 def _man_hinh_da_luu(loai):
@@ -378,140 +379,219 @@ def _man_hinh_da_luu(loai):
         di("ds_loai", loai=loai)
 
 
+def _o_dau_phieu(col, o: str, nhan: str, cfg: dict, data, nha_may: str):
+    """Vẽ 1 ô đầu phiếu (đối tác, tổ, lý do…) vào cột col. Giá trị giữ trong session_state['pf_o_<o>']."""
+    k = f"pf_o_{o}"
+    if o == "doi_tac":
+        dt = data["DOI_TAC"]
+        dt = dt[dt["loai"] == cfg.get("doi_tac")]["ten_doi_tac"].drop_duplicates().tolist()
+        return col.selectbox(nhan, dt, index=None, placeholder="Chọn, hoặc gõ tên mới rồi Enter", key=k,
+                             accept_new_options=True,
+                             help="Chọn trong danh sách, hoặc gõ tên mới rồi nhấn Enter. Tên mới được lưu để lần sau chọn lại.") or ""
+    if o == "bo_phan":
+        bp = data["BO_PHAN"]
+        bp = bp[bp["nha_may"] == nha_may]["ten_bo_phan"].drop_duplicates().tolist()
+        return col.selectbox(nhan, bp, index=None, placeholder="Chọn, hoặc gõ tên rồi Enter", key=k,
+                             accept_new_options=True) or ""
+    if o == "kho_den":
+        return col.selectbox(nhan, [n for n in NHA_MAY if n != nha_may], key=k)
+    return col.text_input(nhan, key=k)
+
+
 def trang_phieu():
     loai = st.session_state.loai
     cfg = LOAI[loai]
     u = user()
     data = du_lieu()
-    cot_phai = tieu_de_trang(f"{loai} · {cfg['ten']}", ve=("ds_loai", {"loai": loai}), cot=(1.25, 6.25, 2.5))
     if st.session_state.get("ket_qua"):
+        tieu_de_trang(f"{loai} · {cfg['ten']}", ve=("ds_loai", {"loai": loai}), cot=(1.25, 6.25, 2.5))
         _man_hinh_da_luu(loai)
         return
     st.session_state.setdefault("dong", [])
     st.session_state.setdefault("phieu_id", L.PhieuNhap(loai, "", "").phieu_id)
     ds = st.session_state.dong
-    khoa_dau = bool(ds)
+    khoa_dau = bool(ds)          # đã có dòng hàng thì không đổi nhà máy / sổ nữa
+    ss = st.session_state
+    ss.setdefault("pf_nm", u["nha_may"])
+    ss.setdefault("pf_ngay", L.hom_nay())
 
-    # ---- Thông tin phiếu (lưới 4 cột) ----
-    g = _Luoi(4)
+    # ===== Hàng 1: [Quay lại] Tiêu đề  [NM · Sổ · Ngày ✏️]  ......  [LƯU PHIẾU] =====
+    h1 = st.columns([1.1, 2.7, 3.6, 2.6], vertical_alignment="center")
+    if h1[0].button("⬅ Quay lại", key=f"ve_ds_loai_{loai}"):
+        _reset_phieu()
+        di("ds_loai", loai=loai)
+    h1[1].markdown(f'<div class="tieu-de">{loai} · {cfg["ten"]}</div>', unsafe_allow_html=True)
+    cac_so = L.so_cua_nha_may(data, ss.pf_nm)
+    if ss.get("pf_so") not in cac_so:
+        ss.pop("pf_so", None)
+    with h1[2].popover(f"📍 {ss.pf_nm}   ·   📅 {ss.pf_ngay:%d/%m/%Y}   ✏️", width="content",
+                       help="Bấm để đổi ngày phiếu (hoặc nhà máy – chỉ quản trị)"):
+        st.selectbox("Nhà máy", NHA_MAY, key="pf_nm", disabled=not la_qt() or khoa_dau,
+                     help="Lấy theo tài khoản. Chỉ quản trị đổi được, và chỉ khi phiếu chưa có dòng hàng.")
+        st.date_input("Ngày phiếu", key="pf_ngay", max_value=L.hom_nay(), format="DD/MM/YYYY")
+    nha_may, ngay = ss.pf_nm, ss.pf_ngay
+    if not cac_so:
+        st.error(f"{nha_may} chưa khai kho MISA (sheet KHO_MISA). Báo quản trị.")
+        return
+
+    # ===== Hàng 2: các ô đầu phiếu CẦN THIẾT của loại này; phần phụ gom vào nút "➕" =====
+    hien_san = [o for o in cfg["bat_buoc"] if o != "phieu_lien_quan"] + \
+               [o for o in cfg["hien"] if o == "so_chung_tu"]
+    phu = [o for o in cfg["hien"] if o not in hien_san]
+    o_so = loai == "X9" or len(cac_so) > 1
+    if loai == "X9" and len(cac_so) < 2:
+        st.error(f"{nha_may} chỉ có 1 sổ – không chuyển sổ được.")
+        return
+    gt = {}
     with st.container(border=True):
-        nha_may = g.o().selectbox("Nhà máy", NHA_MAY, index=NHA_MAY.index(u["nha_may"]),
-                                  disabled=not la_qt() or khoa_dau)
-        ngay = g.o().date_input("Ngày phiếu", value=L.hom_nay(), max_value=L.hom_nay(), format="DD/MM/YYYY")
-        cac_so = L.so_cua_nha_may(data, nha_may)
-        if not cac_so:
-            st.error(f"{nha_may} chưa khai kho MISA (sheet KHO_MISA). Báo quản trị.")
-            return
+        rong = ([1.4] if o_so else []) + [2.0] * len(hien_san) + [1.9]
+        c = st.columns(rong, vertical_alignment="bottom")
+        i = 0
         if loai == "X9":
-            if len(cac_so) < 2:
-                st.error(f"{nha_may} chỉ có 1 sổ – không chuyển sổ được.")
-                return
-            chieu = g.o().selectbox("Chiều chuyển sổ", [f"{cac_so[0]} → {cac_so[1]}", f"{cac_so[1]} → {cac_so[0]}"],
-                                    disabled=khoa_dau)
+            chieu = c[0].selectbox("Chiều chuyển sổ *", [f"{cac_so[0]} → {cac_so[1]}", f"{cac_so[1]} → {cac_so[0]}"],
+                                   key="pf_chieu_so", disabled=khoa_dau)
             so_x, so_n = chieu.split(" → ")
-        else:
-            so = g.o().selectbox("Công ty (sổ)", cac_so, disabled=khoa_dau or len(cac_so) == 1)
+            i = 1
+        elif o_so:
+            so = c[0].selectbox("Sổ (công ty) *", cac_so, key="pf_so", disabled=khoa_dau)
             so_x = so_n = so
-        gt = {}
-        for o in [o for o in cfg["bat_buoc"] + cfg["hien"] if o != "phieu_lien_quan"]:
-            nhan = NHAN_O[o] + (" *" if o in cfg["bat_buoc"] else "")
-            if o == "doi_tac":
-                dt = data["DOI_TAC"]
-                dt = dt[dt["loai"] == cfg.get("doi_tac")]["ten_doi_tac"].drop_duplicates().tolist()
-                gt[o] = g.o().selectbox(nhan, dt, index=None, placeholder="Chọn hoặc gõ tên mới rồi Enter",
-                                        accept_new_options=True, help="Chọn trong danh sách, hoặc gõ tên mới rồi nhấn Enter. "
-                                        "Tên mới sẽ được lưu vào danh sách để lần sau chọn lại.") or ""
-            elif o == "bo_phan":
-                bp = data["BO_PHAN"]
-                bp = bp[bp["nha_may"] == nha_may]["ten_bo_phan"].drop_duplicates().tolist()
-                gt[o] = g.o().selectbox(nhan, bp, index=None, placeholder="Chọn hoặc gõ tên rồi Enter",
-                                        accept_new_options=True) or ""
-            elif o == "kho_den":
-                gt[o] = g.o().selectbox(nhan, [n for n in NHA_MAY if n != nha_may])
-            else:
-                gt[o] = g.o().text_input(nhan)
-        ghi_chu_phieu = g.o().text_input("Ghi chú phiếu")
+            i = 1
+        else:
+            so_x = so_n = cac_so[0]
+        for o in hien_san:
+            gt[o] = _o_dau_phieu(c[i], o, NHAN_O[o] + (" *" if o in cfg["bat_buoc"] else ""), cfg, data, nha_may)
+            i += 1
+        da_nhap = sum(bool(str(ss.get(f"pf_o_{o}", "")).strip()) for o in phu) + bool(str(ss.get("pf_ghi_chu", "")).strip())
+        ten_phu = ", ".join([{"lsx": "LSX", "po_kh": "PO khách", "so_chung_tu": "số chứng từ"}.get(o, NHAN_O[o])
+                             for o in phu] + ["ghi chú"])
+        with c[i].popover(f"➕ {ten_phu}" + (f"  ({da_nhap} ✓)" if da_nhap else ""), width="stretch"):
+            for o in phu:
+                gt[o] = _o_dau_phieu(st, o, NHAN_O[o], cfg, data, nha_may)
+            ghi_chu_phieu = st.text_input("Ghi chú phiếu", key="pf_ghi_chu")
+        if not hien_san and not o_so:
+            st.markdown(f'<div class="nho">Sổ {so_x}. Loại phiếu này không cần thêm thông tin đầu phiếu.</div>',
+                        unsafe_allow_html=True)
 
-    # ---- Trái: thêm hàng · Phải: các dòng đã thêm ----
-    trai, phai = st.columns([5.6, 6.4], gap="medium")
-    n = st.session_state.get("dem_dong", 0)
-    with trai:
-        with st.container(border=True):
-            dau = cfg["dau"]
-            if dau == 0:
-                lua = st.radio("Dòng này là", ["XUẤT ra (hàng đem đi / đem cắt)", "NHẬP vào (hàng nhận về / sau cắt)"],
-                               horizontal=True, key=f"chieu_{n}")
-                dau = -1 if lua.startswith("XUẤT") else 1
-            h = _chon_hang(data, nha_may, so_x if dau < 0 else so_n, xuat=dau < 0, key=str(n))
-            hs = L.he_so(data, h["ma_hang"], str(ngay)) if h is not None else None
-            # Ô "kg hóa đơn" chỉ có nghĩa với phiếu nhập mua và hàng mà kế toán ghi theo kg (thép tấm, ống, hộp…)
-            la_kg = loai == "N1" and hs is not None and str(hs["dvt_misa"]).strip().lower() == "kg"
-            c = st.columns([1.1, 1.3, 0.9, 1.2] if la_kg else [1.3, 1.1, 1.6])
-            sl = c[0].number_input(f"Số lượng ({h['dvt_kho']})" if h is not None else "Số lượng",
-                                   min_value=0.0, step=1.0, format="%.2f", key=f"sl_{n}")
-            kg_hd = 0.0
-            if la_kg:
-                kg_hd = c[1].number_input(
-                    "Kg ghi trên hóa đơn (nếu có)", min_value=0.0, step=1.0, format="%.3f", key=f"kg_{n}",
-                    help="Số kg mà nhà cung cấp ghi trên HÓA ĐƠN (hoặc phiếu cân) cho dòng hàng này. Để 0 nếu chưa có. "
-                         "App so với kg quy đổi từ số tấm/cây và cảnh báo nếu lệch quá ±2%.")
-            lo = c[-2].text_input("Lô (nếu có)", key=f"lo_{n}")
-            gc = c[-1].text_input("Ghi chú dòng", key=f"gc_{n}")
-            c = st.columns([2.2, 3], vertical_alignment="center")
-            if h is not None and hs is None:
-                c[1].error("Chưa có hệ số quy đổi đã duyệt – báo quản trị.")
-            elif h is not None:
+    # ===== Hàng 3: nhập 1 dòng hàng trên MỘT hàng ngang =====
+    n = ss.get("dem_dong", 0)
+    with st.container(border=True):
+        dau = cfg["dau"]
+        if dau == 0:
+            lua = st.radio("Dòng này là", ["▼ XUẤT ra (hàng đem đi / đem cắt)", "▲ NHẬP vào (hàng nhận về / sau cắt)"],
+                           horizontal=True, key=f"pf_chieu_{n}", label_visibility="collapsed")
+            dau = -1 if "XUẤT" in lua else 1
+        so_dong = so_x if dau < 0 else so_n
+        # chiều rộng cột tính trước, ô "kg hóa đơn" chỉ hiện khi cần
+        hang_chon = ss.get(f"pf_sel_{n}")
+        hs0 = L.he_so(data, hang_chon, str(ngay)) if hang_chon else None
+        la_kg = loai == "N1" and hs0 is not None and str(hs0["dvt_misa"]).strip().lower() == "kg"
+        c = st.columns([3.6, 1.05, 1.45, 1.15, 1.05] if la_kg else [3.6, 1.05, 1.45, 1.05], vertical_alignment="bottom")
+        with c[0]:
+            h = _chon_hang(data, nha_may, so_dong, xuat=dau < 0, key=str(n))
+        hs = L.he_so(data, h["ma_hang"], str(ngay)) if h is not None else None
+        sl = c[1].number_input(f"Số {h['dvt_kho']}" if h is not None else "Số lượng", min_value=0.0, step=1.0,
+                               format="%.2f", key=f"pf_sl_{n}")
+        if hs is not None and sl > 0:
+            c[2].markdown(f'<div class="qd-auto">= {_so(sl * float(hs["he_so"]))} {hs["dvt_misa"]}</div>',
+                          unsafe_allow_html=True)
+        else:
+            c[2].markdown('<div class="qd-auto qd-trong">= … (tự quy đổi)</div>', unsafe_allow_html=True)
+        kg_hd = 0.0
+        if la_kg:
+            kg_hd = c[3].number_input("Kg hóa đơn", min_value=0.0, step=1.0, format="%.3f", key=f"pf_kg_{n}",
+                                      help="Số kg ghi trên HÓA ĐƠN (hoặc phiếu cân) của dòng này. Để 0 nếu chưa có. "
+                                           f"App so với kg quy đổi và cảnh báo nếu lệch quá ±{DUNG_SAI * 100:g}%.")
+        them = c[-1].button("➕ THÊM", disabled=h is None or hs is None, key=f"pf_them_{n}")
+        # dòng nhắc ngắn dưới hàng nhập
+        if h is not None and hs is None:
+            st.error("Hàng này chưa có hệ số quy đổi đã duyệt – báo quản trị.")
+        elif h is not None:
+            txt = f'1 {h["dvt_kho"]} = <b>{_so(hs["he_so"])} {hs["dvt_misa"]}</b>'
+            pct = L.lech_kg_hoa_don(sl * float(hs["he_so"]), hs["dvt_misa"], kg_hd) if sl > 0 else None
+            if pct is not None:
+                vuot = abs(pct) > DUNG_SAI + 1e-12
+                txt += (f' · <span style="color:{"#b42318" if vuot else "#1a7f37"}"><b>Hóa đơn lệch {_pt(pct, 2)}'
+                        f'{f" ⚠ VƯỢT ±{DUNG_SAI * 100:g}% (vẫn lưu được)" if vuot else " (trong dung sai)"}</b></span>')
+            txt += " · Gõ số lượng, nhấn Enter để xem kg, rồi bấm <b>THÊM</b>."
+            st.markdown(f'<div class="nho">{txt}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="nho">Bấm ô <b>Hàng</b>, gõ vài chữ tên hàng (vd: <i>thep hop 20</i>), chọn, '
+                        'rồi gõ số lượng và bấm <b>THÊM</b>.</div>', unsafe_allow_html=True)
+        if them:
+            if sl <= 0:
+                st.error("Số lượng phải lớn hơn 0.")
+            else:
                 he = float(hs["he_so"])
-                txt = f'1 {h["dvt_kho"]} = <b>{he:g} {hs["dvt_misa"]}</b>'
-                if sl > 0:
-                    txt += f' · {sl:g} {h["dvt_kho"]} ≈ <b>{sl * he:,.3f} {hs["dvt_misa"]}</b>'
-                pct = L.lech_kg_hoa_don(sl * he, hs["dvt_misa"], kg_hd) if sl > 0 else None
-                if pct is not None:
-                    vuot = abs(pct) > DUNG_SAI + 1e-12
-                    txt += (f'<br><span style="color:{"#b42318" if vuot else "#1a7f37"}"><b>Hóa đơn lệch {pct * 100:+.2f}%'
-                            f'{f" ⚠ VƯỢT ±{DUNG_SAI * 100:g}%" if vuot else " (trong dung sai)"}</b></span>')
-                c[1].markdown(f'<div class="nho">{txt}</div>', unsafe_allow_html=True)
-            if c[0].button("➕ THÊM DÒNG VÀO PHIẾU", disabled=h is None or hs is None):
-                if sl <= 0:
-                    st.error("Số lượng phải lớn hơn 0.")
-                else:
-                    ds.append(dict(ma_hang=h["ma_hang"], ten=h["ten_hang"], dvt=h["dvt_kho"], sl=sl, dau=dau,
-                                   lo=lo, gc=gc, qd=sl * float(hs["he_so"]), dvt_misa=hs["dvt_misa"], kg_hd=kg_hd,
-                                   pct=L.lech_kg_hoa_don(sl * float(hs["he_so"]), hs["dvt_misa"], kg_hd)))
-                    st.session_state.dem_dong = n + 1
-                    st.rerun()
-    with phai:
-        with st.container(border=True, height=CAO_DONG):
-            if not ds:
-                st.markdown('<div class="nho">Chưa có dòng nào. Chọn hàng ở khung bên trái, nhập số lượng rồi bấm '
-                            '<b>THÊM DÒNG VÀO PHIẾU</b>.</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f"**Các dòng trong phiếu ({len(ds)})**")
-                for i, d in enumerate(ds):
-                    r = st.columns([0.45, 3.6, 1.3, 1.8, 0.6], vertical_alignment="center")
-                    chieu_txt = ("▲ nhập " if d["dau"] > 0 else "▼ xuất ") if cfg["dau"] == 0 else ""
-                    r[0].markdown(f"{i + 1}")
-                    r[1].markdown(f"{chieu_txt}{d['ten']}" + (f"  <span class='nho'>lô {d['lo']}</span>" if d["lo"] else ""),
-                                  unsafe_allow_html=True)
-                    r[2].markdown(f"**{d['sl']:g}** {d['dvt']}")
-                    hd = ""
-                    if d.get("kg_hd"):
-                        pct = d.get("pct")
-                        vuot = pct is not None and abs(pct) > DUNG_SAI + 1e-12
-                        mau = "#b42318" if vuot else "#1a7f37"
-                        phan_tram = "" if pct is None else f" ({pct * 100:+.1f}%)"
-                        hd = f"<br><span style='color:{mau}'>HĐ {d['kg_hd']:g} kg{phan_tram}{' ⚠' if vuot else ''}</span>"
-                    r[3].markdown(f"<span class='nho'>{d['qd']:,.1f} {d['dvt_misa']}{hd}</span>", unsafe_allow_html=True)
-                    if r[4].button("✕", key=f"xoa_{i}", help="Xóa dòng này"):
-                        ds.pop(i)
-                        st.rerun()
+                ds.append(dict(ma_hang=h["ma_hang"], ten=h["ten_hang"], dvt=h["dvt_kho"], sl=sl, dau=dau, lo="", gc="",
+                               he=he, qd=sl * he, dvt_misa=hs["dvt_misa"], kg_hd=kg_hd))
+                ss.dem_dong = n + 1
+                ss.ver_bang = ss.get("ver_bang", 0) + 1
+                st.rerun()
 
-    # ---- Nút LƯU: nằm trên đầu trang, luôn nhìn thấy ----
-    with cot_phai:
-        luu = st.button("💾 LƯU PHIẾU", type="primary", disabled=not ds, key="luu_phieu")
+    # ===== Hàng 4: bảng các dòng – sửa SL / Lô / Ghi chú ngay trong bảng, tick "Xóa" để bỏ dòng =====
+    with st.container(border=True):
+        if not ds:
+            st.markdown('<div class="nho" style="padding:6px 0">Chưa có dòng nào trong phiếu.</div>', unsafe_allow_html=True)
+        else:
+            hai_chieu = cfg["dau"] == 0
+            bang = pd.DataFrame([{
+                "#": i + 1,
+                "Chiều": ("▲ nhập" if d["dau"] > 0 else "▼ xuất"),
+                "Tên hàng": d["ten"], "SL": float(d["sl"]), "ĐVT": d["dvt"],
+                "Quy đổi": f'{_so(d["qd"])} {d["dvt_misa"]}',
+                "Kg HĐ": _kg_hd_txt(d), "Lô": d["lo"], "Ghi chú": d["gc"], "Xóa": False} for i, d in enumerate(ds)])
+            if not hai_chieu:
+                bang = bang.drop(columns="Chiều")
+            if not any(d.get("kg_hd") for d in ds):
+                bang = bang.drop(columns="Kg HĐ")
+            cao = min(36 + 35 * len(ds), 250)
+            sua = st.data_editor(
+                bang, key=f"pf_bang_{ss.get('ver_bang', 0)}", hide_index=True, width="stretch", height=cao,
+                disabled=[k for k in bang.columns if k not in ("SL", "Lô", "Ghi chú", "Xóa")],
+                column_config={
+                    "#": st.column_config.NumberColumn(width=36),
+                    "Tên hàng": st.column_config.TextColumn(width="large"),
+                    "SL": st.column_config.NumberColumn(min_value=0.001, format="%g", width=80,
+                                                        help="Bấm đúp để sửa số lượng"),
+                    "ĐVT": st.column_config.TextColumn(width=60),
+                    "Lô": st.column_config.TextColumn(width=90, help="Bấm đúp để ghi số lô (nếu có)"),
+                    "Ghi chú": st.column_config.TextColumn(width="medium", help="Bấm đúp để ghi chú dòng"),
+                    "Xóa": st.column_config.CheckboxColumn(width=50, help="Tick để xóa dòng này"),
+                })
+            # đưa chỉnh sửa trong bảng về danh sách dòng
+            doi = False
+            for i, r in sua.iterrows():
+                d = ds[i]
+                sl_moi = float(r["SL"]) if pd.notna(r["SL"]) and float(r["SL"]) > 0 else d["sl"]
+                if abs(sl_moi - d["sl"]) > 1e-12:
+                    d["sl"], d["qd"] = sl_moi, sl_moi * d["he"]
+                    doi = True
+                d["lo"] = "" if pd.isna(r["Lô"]) else str(r["Lô"]).strip()
+                d["gc"] = "" if pd.isna(r["Ghi chú"]) else str(r["Ghi chú"]).strip()
+            bo = [i for i, r in sua.iterrows() if bool(r["Xóa"])]
+            if bo:
+                for i in sorted(bo, reverse=True):
+                    ds.pop(i)
+                ss.ver_bang = ss.get("ver_bang", 0) + 1
+                st.rerun()
+            if doi:   # SL đổi thì vẽ lại để cột "Quy đổi" / "Kg HĐ" cập nhật
+                ss.ver_bang = ss.get("ver_bang", 0) + 1
+                st.rerun()
+            tong = {}
+            for d in ds:
+                tong[d["dvt_misa"]] = tong.get(d["dvt_misa"], 0.0) + d["qd"]
+            st.markdown(f'<div class="nho"><b>{len(ds)} dòng</b> · Tổng quy đổi: '
+                        + " · ".join(f"<b>{_so(v)} {k}</b>" for k, v in tong.items())
+                        + " · Bấm đúp vào ô SL / Lô / Ghi chú để sửa, tick <b>Xóa</b> để bỏ dòng.</div>",
+                        unsafe_allow_html=True)
+
+    # ===== Nút LƯU: trên đầu trang, luôn nhìn thấy =====
+    with h1[3]:
+        luu = st.button(f"💾 LƯU PHIẾU ({len(ds)} dòng)" if ds else "💾 LƯU PHIẾU", type="primary",
+                        disabled=not ds, key="luu_phieu")
     if luu:
-        p = L.PhieuNhap(loai=loai, ngay=str(ngay), nha_may=nha_may, phieu_id=st.session_state.phieu_id,
-                        ghi_chu_phieu=ghi_chu_phieu,
+        p = L.PhieuNhap(loai=loai, ngay=str(ngay), nha_may=nha_may, phieu_id=ss.phieu_id,
+                        ghi_chu_phieu=str(ss.get("pf_ghi_chu", "")),
                         dong=[L.DongNhap(d["ma_hang"], d["sl"], dau=d["dau"], lo=d["lo"], ghi_chu=d["gc"],
                                          kg_hoa_don=d.get("kg_hd", 0.0)) for d in ds],
                         **gt)
@@ -523,9 +603,20 @@ def trang_phieu():
             st.error(f"Lỗi kết nối, phiếu CHƯA chắc đã lưu. Bấm LƯU PHIẾU lại (không bị ghi trùng). Chi tiết: {e}")
         else:
             du_lieu_moi()
-            st.session_state.ket_qua = so_phieu
-            st.session_state.ket_ngay = str(ngay)
+            ss.ket_qua = so_phieu
+            ss.ket_ngay = str(ngay)
             st.rerun()
+
+
+def _kg_hd_txt(d: dict) -> str:
+    """Cột 'Kg HĐ' trong bảng dòng: '194 (+2,6% ⚠)'."""
+    if not d.get("kg_hd"):
+        return ""
+    pct = L.lech_kg_hoa_don(d["qd"], d["dvt_misa"], d["kg_hd"])
+    if pct is None:
+        return _so(d["kg_hd"])
+    vuot = abs(pct) > DUNG_SAI + 1e-12
+    return f'{_so(d["kg_hd"])} ({_pt(pct)}{" ⚠" if vuot else ""})'
 
 
 # ---------------- N4 nhận chuyển kho ----------------
